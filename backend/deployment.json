@@ -1,0 +1,8 @@
+{
+  "polkadotHubTestnet": {
+    "TruthToken": "0x2f7F296F9f269Ede14bc99CCf35F9Fb0EC3B56b6",
+    "PolkaNews": "0xFc43D3C0C227E5De166B9061Bd13493C2e378Ed5",
+    "Oracle": "0x07b1DAf7b72dd9E0F6D57e4B9C8cFC00719096f9",
+    "deploymentDate": "2024-03-21"
+  }
+}
