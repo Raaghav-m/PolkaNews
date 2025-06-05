@@ -1,0 +1,17 @@
+{
+  "name": "polkanews-oracle",
+  "version": "1.0.0",
+  "description": "Oracle service for PolkaNews",
+  "main": "script.js",
+  "scripts": {
+    "start": "node script.js"
+  },
+  "dependencies": {
+    "@pinata/sdk": "^2.1.0",
+    "axios": "^1.6.7",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.11.1",
+    "node-fetch": "2",
+    "openai": "^4.28.0"
+  }
+}
