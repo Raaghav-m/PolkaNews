@@ -1,0 +1,23 @@
+import type { Metadata } from "next";
+import "./globals.css";
+import { Providers } from "@/lib/providers";
+
+export const metadata: Metadata = {
+  title: "PolkaNews",
+  description: "Decentralized News Platform",
+  generator: "v0.dev",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html lang="en" className="h-full">
+      <body className="h-full">
+        <Providers>{children}</Providers>
+      </body>
+    </html>
+  );
+}
