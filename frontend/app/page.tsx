@@ -57,6 +57,7 @@ import {
   useReadContract,
   useWatchContractEvent,
   getContractEvents,
+  usePublicClient,
 } from "wagmi";
 import { metaMask } from "wagmi/connectors";
 import { WalletConnect } from "@/components/WalletConnect";
@@ -167,6 +168,8 @@ export default function PolkaNewsDashboard() {
   const [page, setPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
 
+  const publicClient = usePublicClient();
+
   // Get news count
   const { data: newsCount, isLoading: isLoadingCount } = useReadContract({
     address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
@@ -186,42 +189,44 @@ export default function PolkaNewsDashboard() {
     args: [(page - 1) * ITEMS_PER_PAGE, ITEMS_PER_PAGE],
   });
 
-  // Watch for new news submissions
-  useWatchContractEvent({
-    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
-    abi: PolkaNewsABI,
-    eventName: "NewsSubmitted",
-    onLogs: (logs) => {
-      // Refresh the current page when new news is submitted
-      if (page === 1) {
-        // Trigger a refetch of the current page
-        setPage((prev) => prev);
-      }
-    },
-  });
-
   // Process news data when it changes
   useEffect(() => {
     const processNewsData = async () => {
       if (!newsData) return;
 
       try {
+        console.log("Raw news data from contract:", newsData);
+
         const articles = await Promise.all(
           newsData.map(async (article: any) => {
             try {
+              console.log("Processing article:", article);
               const ipfsContent = await ipfsService.getContent(
                 article.contentHash
               );
-              return {
+              console.log("IPFS content for article:", ipfsContent);
+
+              // Get article details using public client
+              const articleDetails = await publicClient.readContract({
+                address: process.env
+                  .NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+                abi: PolkaNewsABI,
+                functionName: "getNewsByHash",
+                args: [article.contentHash],
+              });
+
+              const processedArticle = {
                 contentHash: article.contentHash,
                 reporter: article.reporter,
-                verified: article.isVerified,
+                isVerified: articleDetails[2], // Use isVerified from getNewsByHash
                 timestamp: new Date(
                   Number(article.timestamp) * 1000
                 ).toLocaleString(),
                 title: ipfsContent.name,
                 content: ipfsContent.content,
               };
+              console.log("Processed article:", processedArticle);
+              return processedArticle;
             } catch (error) {
               console.error(
                 `Error fetching IPFS content for ${article.contentHash}:`,
@@ -232,7 +237,9 @@ export default function PolkaNewsDashboard() {
           })
         );
 
-        setNewsArticles(articles.filter((article) => article !== null));
+        const filteredArticles = articles.filter((article) => article !== null);
+        console.log("Final processed articles:", filteredArticles);
+        setNewsArticles(filteredArticles);
       } catch (error) {
         console.error("Error processing news data:", error);
         toast({
@@ -244,7 +251,7 @@ export default function PolkaNewsDashboard() {
     };
 
     processNewsData();
-  }, [newsData]);
+  }, [newsData, publicClient]);
 
   // Load subscription details and token balance
   useEffect(() => {
@@ -477,7 +484,7 @@ export default function PolkaNewsDashboard() {
                   <div className="text-2xl font-bold">
                     {newsArticles.length > 0
                       ? `${Math.round(
-                          (newsArticles.filter((n) => n.verified).length /
+                          (newsArticles.filter((n) => n.isVerified).length /
                             newsArticles.length) *
                             100
                         )}%`
@@ -537,7 +544,7 @@ export default function PolkaNewsDashboard() {
                               {news.reporter.slice(-4)}
                             </TableCell>
                             <TableCell>
-                              {news.verified ? (
+                              {news.isVerified ? (
                                 <Badge
                                   variant="default"
                                   className="bg-green-100 text-green-800"
@@ -779,12 +786,6 @@ export default function PolkaNewsDashboard() {
                       onClick={() => setActiveTab("subscription")}
                     >
                       Subscription
-                    </Button>
-                    <Button
-                      variant={activeTab === "reporter" ? "default" : "ghost"}
-                      onClick={() => setActiveTab("reporter")}
-                    >
-                      Reporter
                     </Button>
                     <Link href="/faucet">
                       <Button variant="outline">Get Test Tokens</Button>
