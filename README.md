@@ -3,7 +3,7 @@
 PolkaNews is a decentralized news platform where reporters are rewarded for publishing truthful content. It uses an AI-based oracle to verify the authenticity of news submissions and mints on-chain rewards (TruthTokens) for verified content.
 <div align="center">
 
-!(./assets/1.png)
+![PolkaNews](./assets/1.png)
 
 </div>
 ---
@@ -28,7 +28,7 @@ We chose **Polkadot's AssetHub** for its:
 - ✅ Bridges and **XCMP-ready** for future composability
 <div align="center">
 
-!(./assets/2.png)
+![PolkaNews](./assets/2.png)
 
 </div>
 ---
@@ -94,7 +94,7 @@ POLKANEWS_ADDRESS=0x815F645cc9090CB289AA6653a02Dc0Bcac10a13E
 
 <div align="center">
 
-!(./assets/3.png)
+![PolkaNews](./assets/3.png)
 
 </div>
 
