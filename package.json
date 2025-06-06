@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@pinata/sdk": "^2.1.0",
+    "@tanstack/react-query": "^5.80.6",
+    "@wagmi/core": "^2.17.2",
+    "axios": "^1.9.0",
+    "ethers": "6.11.1",
+    "viem": "2.7.9",
+    "wagmi": "2.5.7"
+  }
+}

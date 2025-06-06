@@ -5,6 +5,11 @@
         "internalType": "address",
         "name": "_truthToken",
         "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_subscriptionManager",
+        "type": "address"
       }
     ],
     "stateMutability": "nonpayable",
@@ -37,9 +42,9 @@
     "inputs": [
       {
         "indexed": true,
-        "internalType": "bytes32",
+        "internalType": "string",
         "name": "contentHash",
-        "type": "bytes32"
+        "type": "string"
       },
       {
         "indexed": true,
@@ -56,14 +61,14 @@
     "inputs": [
       {
         "indexed": true,
-        "internalType": "bytes32",
+        "internalType": "string",
         "name": "contentHash",
-        "type": "bytes32"
+        "type": "string"
       },
       {
         "indexed": false,
         "internalType": "bool",
-        "name": "verified",
+        "name": "isVerified",
         "type": "bool"
       }
     ],
@@ -116,19 +121,35 @@
     "type": "event"
   },
   {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "name": "isReporter",
+    "inputs": [],
+    "name": "getAllNews",
     "outputs": [
       {
-        "internalType": "bool",
+        "components": [
+          {
+            "internalType": "string",
+            "name": "contentHash",
+            "type": "string"
+          },
+          {
+            "internalType": "address",
+            "name": "reporter",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "timestamp",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bool",
+            "name": "isVerified",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct PolkaNews.NewsArticle[]",
         "name": "",
-        "type": "bool"
+        "type": "tuple[]"
       }
     ],
     "stateMutability": "view",
@@ -137,17 +158,63 @@
   {
     "inputs": [
       {
-        "internalType": "bytes32",
-        "name": "",
-        "type": "bytes32"
+        "internalType": "uint256",
+        "name": "startIndex",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "count",
+        "type": "uint256"
       }
     ],
-    "name": "newsArticles",
+    "name": "getNewsArticles",
     "outputs": [
       {
-        "internalType": "bytes32",
+        "components": [
+          {
+            "internalType": "string",
+            "name": "contentHash",
+            "type": "string"
+          },
+          {
+            "internalType": "address",
+            "name": "reporter",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "timestamp",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bool",
+            "name": "isVerified",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct PolkaNews.NewsArticle[]",
+        "name": "",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
         "name": "contentHash",
-        "type": "bytes32"
+        "type": "string"
+      }
+    ],
+    "name": "getNewsByHash",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "contentHash_",
+        "type": "string"
       },
       {
         "internalType": "address",
@@ -163,6 +230,87 @@
         "internalType": "uint256",
         "name": "timestamp",
         "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getNewsCount",
+    "outputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "newsArticles",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "contentHash",
+        "type": "string"
+      },
+      {
+        "internalType": "address",
+        "name": "reporter",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "isVerified",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "name": "newsByHash",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "contentHash",
+        "type": "string"
+      },
+      {
+        "internalType": "address",
+        "name": "reporter",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "isVerified",
+        "type": "bool"
       }
     ],
     "stateMutability": "view",
@@ -195,6 +343,13 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "registerReporter",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "address",
@@ -218,6 +373,25 @@
     "inputs": [
       {
         "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "reporters",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "_oracle",
         "type": "address"
       }
@@ -230,14 +404,27 @@
   {
     "inputs": [
       {
-        "internalType": "bytes32",
-        "name": "_contentHash",
-        "type": "bytes32"
+        "internalType": "string",
+        "name": "contentHash",
+        "type": "string"
       }
     ],
     "name": "submitNews",
     "outputs": [],
     "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "subscriptionManager",
+    "outputs": [
+      {
+        "internalType": "contract SubscriptionManager",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
     "type": "function"
   },
   {
@@ -269,17 +456,30 @@
   {
     "inputs": [
       {
-        "internalType": "bytes32",
-        "name": "_contentHash",
-        "type": "bytes32"
+        "internalType": "string",
+        "name": "contentHash",
+        "type": "string"
       },
       {
         "internalType": "bool",
-        "name": "_verified",
+        "name": "isVerified",
         "type": "bool"
       }
     ],
     "name": "verifyNews",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "contentHash",
+        "type": "string"
+      }
+    ],
+    "name": "viewNews",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"

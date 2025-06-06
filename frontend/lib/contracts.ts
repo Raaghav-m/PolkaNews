@@ -1,10 +1,10 @@
-import { writeContract } from "wagmi/actions";
+import { writeContract, readContract } from "wagmi/actions";
 import { ethers } from "ethers";
-import PolkaNewsAbi from "./PolkaNewsAbi.json";
-import TruthTokenAbi from "./TruthTokenAbi.json";
+import PolkaNewsABI from "@/lib/abi/PolkaNewsABI.json";
+import TruthTokenAbi from "./abi/TruthTokenABI.json";
 import { config } from "./wagmi-config";
 
-export const polkaNewsABI = PolkaNewsAbi;
+export const polkaNewsABI = PolkaNewsABI;
 
 // Get addresses from environment variables
 export const POLKANEWS_ADDRESS = process.env
@@ -14,7 +14,7 @@ export const TRUTH_TOKEN_ADDRESS = process.env
 
 export const polkaNewsConfig = {
   address: POLKANEWS_ADDRESS,
-  abi: PolkaNewsAbi,
+  abi: PolkaNewsABI,
 } as const;
 
 export async function getTruthTokenAddress(): Promise<string> {
@@ -22,7 +22,7 @@ export async function getTruthTokenAddress(): Promise<string> {
     const provider = new ethers.BrowserProvider(window.ethereum);
     const contract = new ethers.Contract(
       POLKANEWS_ADDRESS,
-      PolkaNewsAbi,
+      PolkaNewsABI,
       provider
     );
     const tokenAddress = await contract.truthToken();
@@ -39,7 +39,7 @@ export async function isReporter(address: string): Promise<boolean> {
     const provider = new ethers.BrowserProvider(window.ethereum);
     const contract = new ethers.Contract(
       POLKANEWS_ADDRESS,
-      PolkaNewsAbi,
+      PolkaNewsABI,
       provider
     );
     const isReporter = await contract.isReporter(address);
@@ -66,13 +66,14 @@ export async function getTokenBalance(
   }
 }
 
-export async function registerReporter(reporterAddress: string) {
+export async function registerReporter() {
   try {
-    await writeContract(config, {
-      ...polkaNewsConfig,
+    const result = await writeContract(config, {
+      address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+      abi: PolkaNewsABI,
       functionName: "registerReporter",
-      args: [reporterAddress],
     });
+    return result;
   } catch (error) {
     console.error("Error registering reporter:", error);
     throw error;
@@ -81,16 +82,103 @@ export async function registerReporter(reporterAddress: string) {
 
 export async function submitNews(contentHash: string) {
   try {
-    console.log("Submitting news with content hash:", contentHash);
-    const tx = await writeContract(config, {
-      ...polkaNewsConfig,
+    const result = await writeContract(config, {
+      address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+      abi: PolkaNewsABI,
       functionName: "submitNews",
       args: [contentHash],
     });
-    console.log("News submission transaction:", tx);
-    return tx;
+    return result;
   } catch (error) {
     console.error("Error submitting news:", error);
+    throw error;
+  }
+}
+
+export async function verifyNews(contentHash: string, isVerified: boolean) {
+  try {
+    const result = await writeContract(config, {
+      address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+      abi: PolkaNewsABI,
+      functionName: "verifyNews",
+      args: [contentHash, isVerified],
+    });
+    return result;
+  } catch (error) {
+    console.error("Error verifying news:", error);
+    throw error;
+  }
+}
+
+export async function viewNews(contentHash: string) {
+  try {
+    const result = await writeContract(config, {
+      address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+      abi: PolkaNewsABI,
+      functionName: "viewNews",
+      args: [contentHash],
+    });
+    return result;
+  } catch (error) {
+    console.error("Error viewing news:", error);
+    throw error;
+  }
+}
+
+export async function getNewsByHash(contentHash: string) {
+  try {
+    const result = await readContract(config, {
+      address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+      abi: PolkaNewsABI,
+      functionName: "getNewsByHash",
+      args: [contentHash],
+    });
+    return result;
+  } catch (error) {
+    console.error("Error getting news by hash:", error);
+    throw error;
+  }
+}
+
+export async function getAllNews() {
+  try {
+    const result = await readContract(config, {
+      address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+      abi: PolkaNewsABI,
+      functionName: "getAllNews",
+    });
+    return result;
+  } catch (error) {
+    console.error("Error getting all news:", error);
+    throw error;
+  }
+}
+
+export async function getNewsArticles(startIndex: number, count: number) {
+  try {
+    const result = await readContract(config, {
+      address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+      abi: PolkaNewsABI,
+      functionName: "getNewsArticles",
+      args: [startIndex, count],
+    });
+    return result;
+  } catch (error) {
+    console.error("Error getting news articles:", error);
+    throw error;
+  }
+}
+
+export async function getNewsCount() {
+  try {
+    const result = await readContract(config, {
+      address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+      abi: PolkaNewsABI,
+      functionName: "getNewsCount",
+    });
+    return result;
+  } catch (error) {
+    console.error("Error getting news count:", error);
     throw error;
   }
 }

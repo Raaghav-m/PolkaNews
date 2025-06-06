@@ -1,16 +1,18 @@
 require("dotenv").config();
 const { ethers } = require("ethers");
-const fs = require("fs");
-const path = require("path");
 const pinataSDK = require("@pinata/sdk");
 const OpenAI = require("openai");
-const PolkaNewsABI = require("./abi/PolkaNewsAbi.json");
+const PolkaNewsABI = require("./abi/PolkaNewsABI.json");
+const SubscriptionManagerABI = require("./abi/SubscriptionManagerABI.json");
 const fetch = require("node-fetch");
 
+// Contract addresses
+const POLKANEWS_ADDRESS = "0x74863B9AAECCB34238FA5f607B03242ddc62e1aF";
+const SUBSCRIPTION_MANAGER_ADDRESS =
+  "0x0aAFC279D67297BeF1cB717d51342EdBDA266798";
+
 // Initialize OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // Initialize Pinata
 const pinata = new pinataSDK(
@@ -18,41 +20,47 @@ const pinata = new pinataSDK(
   process.env.PINATA_SECRET_KEY
 );
 
-// Initialize blockchain connection
-const WS_URL =
-  process.env.WS_URL || "wss://testnet-passet-hub-eth-rpc.polkadot.io/ws";
+// Blockchain connection
 const HTTP_URL =
   process.env.RPC_URL || "https://testnet-passet-hub-eth-rpc.polkadot.io";
 let provider;
 let polkaNewsContract;
+let subscriptionManagerContract;
 
 // Track processed events to avoid duplicates
 const processedEvents = new Set();
 
-async function setupProvider() {
-  try {
-    // Just use HTTP provider since WebSocket isn't supported
-    provider = new ethers.JsonRpcProvider(HTTP_URL);
-    console.log("✅ Connected via HTTP");
+// Add a mapping to store IPFS hashes
+const ipfsHashMapping = new Map();
 
-    const oracleSigner = new ethers.Wallet(
-      process.env.ORACLE_PRIVATE_KEY,
-      provider
-    );
-    polkaNewsContract = new ethers.Contract(
-      process.env.POLKANEWS_ADDRESS ||
-        "0xFc43D3C0C227E5De166B9061Bd13493C2e378Ed5",
-      PolkaNewsABI,
-      oracleSigner
-    );
-  } catch (error) {
-    console.error("Error setting up provider:", error);
-    throw error;
-  }
+async function setupProvider() {
+  provider = new ethers.JsonRpcProvider(HTTP_URL);
+  console.log("✅ Connected via HTTP");
+
+  const oracleSigner = new ethers.Wallet(
+    process.env.ORACLE_PRIVATE_KEY,
+    provider
+  );
+
+  // Initialize both contracts
+  polkaNewsContract = new ethers.Contract(
+    POLKANEWS_ADDRESS,
+    PolkaNewsABI,
+    oracleSigner
+  );
+
+  subscriptionManagerContract = new ethers.Contract(
+    SUBSCRIPTION_MANAGER_ADDRESS,
+    SubscriptionManagerABI,
+    oracleSigner
+  );
+
+  console.log("✅ Contracts initialized");
 }
 
-async function verifyNewsWithAI(newsContent) {
-  const prompt = `You are a fact-checking AI assistant. Please analyze the following news article and determine if it appears to be factual and legitimate. Consider:
+async function verifyNewsWithAI(content) {
+  try {
+    const prompt = `You are a fact-checking AI assistant. Please analyze the following news article and determine if it appears to be factual and legitimate. Consider:
 1. Tone and language (is it sensationalist or balanced?)
 2. Source credibility (are sources cited?)
 3. Factual consistency
@@ -60,7 +68,7 @@ async function verifyNewsWithAI(newsContent) {
 5. Potential bias
 
 News content:
-${JSON.stringify(newsContent, null, 2)}
+${JSON.stringify(content, null, 2)}
 
 Please respond with:
 1. A brief analysis
@@ -74,64 +82,62 @@ Format your response as JSON:
     "verdict": boolean
 }`;
 
-  const completion = await openai.chat.completions.create({
-    model: "gpt-4-turbo-preview",
-    messages: [
-      {
-        role: "system",
-        content:
-          "You are a professional fact-checker. Always respond in valid JSON format with the specified fields: analysis, confidenceScore, and verdict.",
-      },
-      {
-        role: "user",
-        content: prompt,
-      },
-    ],
-    temperature: 0.3,
-    response_format: { type: "json_object" },
-  });
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a fact-checking AI assistant. Analyze news content and provide a structured response with analysis, confidence score, and verdict.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 0.3,
+      max_tokens: 1000,
+    });
 
-  const result = JSON.parse(completion.choices[0].message.content);
-  console.log("AI Verification Result:", result);
-  return result.verdict && result.confidenceScore >= 70;
+    // Parse the response content as JSON
+    const verificationResult = JSON.parse(response.choices[0].message.content);
+    return verificationResult;
+  } catch (error) {
+    console.error("Error in AI verification:", error);
+    throw error;
+  }
 }
 
 async function fetchAndVerifyNews(ipfsHash, reporter) {
   try {
-    // Get the content from IPFS
-    const pinList = await pinata.pinList({
-      hashContains: ipfsHash,
-      status: "pinned",
-    });
-
-    if (!pinList.rows.length) {
-      throw new Error("Content not found on Pinata");
-    }
-
-    // Get the pin data
-    const pin = pinList.rows[0];
-
-    // Since we can't directly get the file content from Pinata SDK,
-    // we'll fetch it from IPFS gateway
+    // Fetch content from IPFS
     const response = await fetch(
       `https://gateway.pinata.cloud/ipfs/${ipfsHash}`
     );
     if (!response.ok) {
-      throw new Error(`Failed to fetch content: ${response.statusText}`);
+      console.error(`Failed to fetch from IPFS. Status: ${response.status}`);
+      throw new Error("Failed to fetch from IPFS");
     }
 
-    const newsContent = await response.json();
-    console.log("Successfully fetched content from IPFS");
+    const content = await response.text();
+    console.log("Fetched content from IPFS:", content);
 
-    // Verify the news using OpenAI
-    const isVerified = await verifyNewsWithAI(newsContent);
-    console.log("AI verification complete. Result:", isVerified);
+    // Verify with AI
+    const verificationResult = await verifyNewsWithAI(content);
+    console.log("AI Verification result:", verificationResult);
 
-    return isVerified;
+    return verificationResult.verdict;
   } catch (error) {
-    console.error("Error processing news:", error);
-    throw error;
+    console.error("Error in fetchAndVerifyNews:", error);
+    return false;
   }
+}
+
+async function storeIpfsHashMapping(contentHash, ipfsHash) {
+  // Extract the hash value from the contentHash object
+  const hashValue = contentHash.hash || contentHash;
+  ipfsHashMapping.set(hashValue, ipfsHash);
+  console.log(`Stored mapping: ${hashValue} -> ${ipfsHash}`);
 }
 
 async function processNewsSubmission(contentHash, reporter) {
@@ -139,39 +145,37 @@ async function processNewsSubmission(contentHash, reporter) {
     console.log(`Processing news from reporter: ${reporter}`);
     console.log("Received content hash:", contentHash);
 
-    // Since we're receiving the keccak256 hash directly, we can use it as is
-    // We'll fetch the content directly from Pinata using the hash
-    try {
-      // Get the content from IPFS
-      const pinList = await pinata.pinList();
-      console.log("Fetching all pins to find matching content...");
-
-      // Find the most recent pin that matches our criteria
-      const matchingPin = pinList.rows.find((pin) => {
-        const pinHash = ethers.keccak256(ethers.toUtf8Bytes(pin.ipfs_pin_hash));
-        return pinHash === contentHash;
-      });
-
-      if (!matchingPin) {
-        throw new Error("Content not found on Pinata");
-      }
-
-      const ipfsHash = matchingPin.ipfs_pin_hash;
-      console.log("Found matching IPFS hash:", ipfsHash);
-
-      // Fetch and verify the news
-      const isVerified = await fetchAndVerifyNews(ipfsHash, reporter);
-
-      // Submit verification result
-      const tx = await polkaNewsContract.verifyNews(contentHash, isVerified);
-      await tx.wait();
-      console.log(`✅ Verification completed. Result: ${isVerified}`);
-      console.log(`Content Hash: ${contentHash}`);
-      console.log(`IPFS Hash: ${ipfsHash}`);
-    } catch (error) {
-      console.error("Error fetching from Pinata:", error);
-      throw error;
+    // Check if reporter is registered
+    const isReporter = await polkaNewsContract.reporters(reporter);
+    if (!isReporter) {
+      console.log(`❌ Reporter ${reporter} is not registered`);
+      return;
     }
+
+    // Get the actual content hash string from the event
+    const contentHashStr = contentHash.hash || contentHash;
+    console.log("Using content hash:", contentHashStr);
+
+    // Get the IPFS hash from the mapping
+    const ipfsHash = ipfsHashMapping.get(contentHashStr);
+    if (!ipfsHash) {
+      console.log("❌ IPFS hash not found for content hash:", contentHashStr);
+      return;
+    }
+    console.log("Found IPFS hash:", ipfsHash);
+
+    // Fetch and verify the news using the IPFS hash
+    const verificationResult = await fetchAndVerifyNews(ipfsHash, reporter);
+
+    // Submit verification result using the IPFS hash since that's what the contract stores
+    const tx = await polkaNewsContract.verifyNews(
+      ipfsHash, // Use IPFS hash since that's what the contract stores in newsByHash
+      verificationResult
+    );
+    await tx.wait();
+    console.log(`✅ Verification completed. Result: ${verificationResult}`);
+    console.log(`Content Hash: ${contentHashStr}`);
+    console.log(`IPFS Hash: ${ipfsHash}`);
   } catch (error) {
     console.error(`❌ Error processing news from ${reporter}:`, error);
   }
@@ -179,15 +183,20 @@ async function processNewsSubmission(contentHash, reporter) {
 
 async function pollForEvents() {
   let lastBlock = await provider.getBlockNumber();
-  console.log("Starting to poll from block:", lastBlock);
+  console.log(`\n🔄 Starting event polling from block ${lastBlock}`);
 
   setInterval(async () => {
     try {
       const currentBlock = await provider.getBlockNumber();
-
       if (currentBlock > lastBlock) {
-        console.log(`Checking blocks ${lastBlock + 1} to ${currentBlock}`);
+        console.log(
+          `\n📦 Checking blocks ${
+            lastBlock + 1
+          } to ${currentBlock} for events...`
+        );
 
+        // Listen for NewsSubmitted events
+        console.log("🔍 Looking for NewsSubmitted events...");
         const filter = polkaNewsContract.filters.NewsSubmitted();
         const events = await polkaNewsContract.queryFilter(
           filter,
@@ -195,91 +204,78 @@ async function pollForEvents() {
           currentBlock
         );
 
-        for (const event of events) {
-          // Create a unique identifier for the event
-          const eventId = `${event.blockNumber}-${event.transactionIndex}-${event.logIndex}`;
+        if (events.length > 0) {
+          console.log(`📰 Found ${events.length} news submission(s)`);
+        }
 
-          // Skip if we've already processed this event
+        for (const event of events) {
+          const eventId = `${event.blockNumber}-${event.transactionIndex}-${event.logIndex}`;
           if (processedEvents.has(eventId)) {
-            console.log(`Skipping already processed event: ${eventId}`);
+            console.log("⏭️  Skipping already processed event");
             continue;
           }
 
-          console.log(
-            `\n📰 New news submission detected in block ${event.blockNumber}!`
-          );
+          // Handle indexed event args
+          const contentHash = event.args[0];
+          const reporter = event.args[1];
 
-          try {
-            await processNewsSubmission(event.args[0], event.args[1]);
-            // Mark event as processed only if successful
-            processedEvents.add(eventId);
-          } catch (error) {
-            if (error.message?.includes("News already verified")) {
-              console.log("✓ News was already verified, marking as processed");
-              processedEvents.add(eventId);
-            } else {
-              console.error(`❌ Error processing news:`, error);
-            }
-          }
+          // Get the transaction to find the IPFS hash
+          const tx = await provider.getTransaction(event.transactionHash);
+          const decodedInput = polkaNewsContract.interface.parseTransaction({
+            data: tx.data,
+          });
+          const ipfsHash = decodedInput.args[0]; // The IPFS hash is the first argument
+
+          // Store the mapping
+          await storeIpfsHashMapping(contentHash, ipfsHash);
+
+          console.log(`\n📝 Processing news from reporter ${reporter}`);
+          await processNewsSubmission(contentHash, reporter);
+          processedEvents.add(eventId);
+        }
+
+        // Listen for SubscriptionPurchased events
+        console.log("\n🔍 Looking for SubscriptionPurchased events...");
+        const subFilter =
+          subscriptionManagerContract.filters.SubscriptionPurchased();
+        const subEvents = await subscriptionManagerContract.queryFilter(
+          subFilter,
+          lastBlock + 1,
+          currentBlock
+        );
+
+        if (subEvents.length > 0) {
+          console.log(`💳 Found ${subEvents.length} new subscription(s)`);
+        }
+
+        for (const event of subEvents) {
+          console.log(
+            `✨ New subscription purchased by: ${event.args.subscriber}`
+          );
         }
 
         lastBlock = currentBlock;
+        console.log(`\n✅ Finished processing block ${currentBlock}`);
+      } else {
+        console.log("⏳ Waiting for new blocks...");
       }
     } catch (error) {
-      console.error("Error polling for events:", error);
-      // Don't update lastBlock if there was an error, so we can retry
+      console.error("❌ Error polling for events:", error);
+      console.log("🔄 Retrying in next interval...");
     }
-  }, 5000); // Poll every 5 seconds
+  }, 5000);
 }
 
 async function main() {
-  try {
-    // Test Pinata connection
-    console.log("Testing Pinata connection...");
-    // await pinata.testAuthentication();
-    console.log("✅ Successfully connected to Pinata");
-
-    // Setup provider and contract
-    await setupProvider();
-
-    // Verify contract connection
-    const oracle = await polkaNewsContract.oracle();
-    console.log("✅ Successfully connected to PolkaNews contract");
-    console.log("Oracle address:", oracle);
-
-    console.log("\n🔍 Starting event polling...");
-    await pollForEvents();
-    console.log("✅ Successfully started event polling");
-
-    // Keep the process running
-    process.stdin.resume();
-  } catch (error) {
-    console.error("Fatal error:", error);
-    process.exit(1);
-  }
+  console.log("\n🚀 Starting PolkaNews Oracle Server");
+  console.log("--------------------------------");
+  await setupProvider();
+  console.log("\n📡 Starting event polling...");
+  await pollForEvents();
+  console.log("\n✨ Server is running and listening for events");
+  console.log("--------------------------------");
+  process.stdin.resume();
 }
-
-// Handle process termination
-process.on("SIGINT", () => {
-  console.log("\nGracefully shutting down...");
-  if (provider && typeof provider.destroy === "function") {
-    provider.destroy();
-  }
-  process.exit(0);
-});
-
-process.on("SIGTERM", () => {
-  console.log("\nGracefully shutting down...");
-  if (provider && typeof provider.destroy === "function") {
-    provider.destroy();
-  }
-  process.exit(0);
-});
-
-// Handle unhandled promise rejections
-process.on("unhandledRejection", (error) => {
-  console.error("Unhandled promise rejection:", error);
-});
 
 main().catch((error) => {
   console.error("Fatal error:", error);

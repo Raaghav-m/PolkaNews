@@ -2,27 +2,33 @@
 
 import { useAccount, useConnect, useDisconnect } from "wagmi";
 import { metaMask } from "wagmi/connectors";
-import { useBalance } from "@/lib/hooks/useBalance";
 import { Button } from "@/components/ui/button";
 import { Wallet } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { getTokenBalance, TRUTH_TOKEN_ADDRESS } from "@/lib/contracts";
+import { Badge } from "@/components/ui/badge";
 
 export function Header() {
   const { address, isConnected } = useAccount();
   const { connect, error: connectError } = useConnect();
   const { disconnect } = useDisconnect();
-  const { balance, isLoading, error: balanceError } = useBalance();
   const [isConnecting, setIsConnecting] = useState(false);
+  const [balance, setBalance] = useState<string>("0");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const formatAddress = (addr: string | undefined) => {
     if (!addr) return "";
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
   };
 
-  const formatBalance = (bal: number) => {
-    if (bal === 0) return "0";
-    if (bal < 0.0001) return "< 0.0001";
-    return bal.toFixed(4);
+  const formatBalance = (bal: bigint) => {
+    if (!bal) return "0";
+    // Convert from wei to ether (18 decimals)
+    const etherBalance = Number(bal) / 1e18;
+    if (etherBalance === 0) return "0";
+    if (etherBalance < 0.0001) return "< 0.0001";
+    return etherBalance.toFixed(4);
   };
 
   const connectWallet = async () => {
@@ -38,6 +44,29 @@ export function Header() {
     }
   };
 
+  useEffect(() => {
+    const fetchBalance = async () => {
+      if (!address || !isConnected) return;
+
+      try {
+        setIsLoading(true);
+        setError(null);
+        const tokenBalance = await getTokenBalance(
+          TRUTH_TOKEN_ADDRESS,
+          address
+        );
+        setBalance(formatBalance(tokenBalance));
+      } catch (err) {
+        console.error("Error fetching balance:", err);
+        setError("Failed to load balance");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchBalance();
+  }, [address, isConnected]);
+
   return (
     <header className="w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="w-full px-6 flex h-14 items-center justify-between">
@@ -50,10 +79,10 @@ export function Header() {
                   <div className="h-2 w-2 animate-pulse rounded-full bg-muted-foreground" />
                   <span className="text-sm">Loading balance...</span>
                 </div>
-              ) : balanceError ? (
+              ) : error ? (
                 <div className="text-destructive">
                   <p className="text-sm">Error loading balance</p>
-                  <p className="text-xs">{balanceError.message}</p>
+                  <p className="text-xs">{error}</p>
                 </div>
               ) : (
                 <div className="flex items-center gap-2">
@@ -61,7 +90,7 @@ export function Header() {
                     Balance:
                   </span>
                   <span className="font-medium text-primary">
-                    {formatBalance(balance)} TRUTH
+                    {balance} TRUTH
                   </span>
                 </div>
               )}
@@ -70,14 +99,28 @@ export function Header() {
         </div>
         <div className="flex items-center gap-4">
           {isConnected ? (
-            <Button
-              variant="outline"
-              onClick={() => disconnect()}
-              className="gap-2"
-            >
-              <Wallet className="h-4 w-4" />
-              {formatAddress(address)}
-            </Button>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 rounded-lg border px-3 py-2">
+                <Wallet className="h-4 w-4 text-green-600" />
+                <span className="font-mono text-sm">
+                  {formatAddress(address)}
+                </span>
+                <Badge
+                  variant="secondary"
+                  className="bg-green-100 text-green-800"
+                >
+                  Connected
+                </Badge>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => disconnect()}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                Disconnect
+              </Button>
+            </div>
           ) : (
             <Button
               onClick={connectWallet}

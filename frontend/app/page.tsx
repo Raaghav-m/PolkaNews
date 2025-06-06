@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -23,10 +23,14 @@ import {
 import {
   CheckCircle,
   XCircle,
+  Wallet,
+  Coins,
   FileText,
   Shield,
   Users,
   Home,
+  CreditCard,
+  Calendar,
 } from "lucide-react";
 import {
   Sidebar,
@@ -42,47 +46,44 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import Link from "next/link";
+import {
+  useAccount,
+  useConnect,
+  useDisconnect,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+  useContractRead,
+  useReadContract,
+  useWatchContractEvent,
+  getContractEvents,
+} from "wagmi";
+import { metaMask } from "wagmi/connectors";
+import { WalletConnect } from "@/components/WalletConnect";
 import { Header } from "@/components/Header";
-import { submitNews } from "@/lib/contracts";
-import { useAccount } from "wagmi";
-import { toast } from "sonner";
+import PolkaNewsABI from "@/lib/abi/PolkaNewsABI.json";
+import SubscriptionManagerABI from "../lib/abi/SubscriptionManagerABI.json";
+import { useToast } from "@/components/ui/use-toast";
+import { Toaster } from "@/components/ui/toaster";
+import {
+  getSubscriptionDetails,
+  getSubscriptionFee,
+  purchaseSubscription,
+  approveToken,
+  getAllowance,
+  getTokenBalance,
+  type SubscriptionDetails,
+} from "@/lib/subscription";
+import { ConnectButton } from "@/components/ui/connect-button";
 import { ipfsService } from "@/lib/ipfs";
-import { type IPFSContent } from "@/lib/types";
-import { ethers } from "ethers";
-import { useNewsVerification } from "@/lib/hooks/useNewsVerification";
-
-// Mock data
-const mockNewsData = [
-  {
-    id: 1,
-    contentHash: "0x1a2b3c4d5e6f7890abcdef1234567890abcdef12",
-    reporter: "0x742d35Cc6634C0532925a3b8D4C0532925a3b8D4",
-    verified: true,
-    timestamp: "2024-01-15 14:30:22",
-    title: "Breaking: New Blockchain Protocol Announced",
-  },
-  {
-    id: 2,
-    contentHash: "0x9876543210fedcba0987654321fedcba09876543",
-    reporter: "0x8ba1f109551bD432803012645Hac136c0532925a",
-    verified: false,
-    timestamp: "2024-01-15 12:15:45",
-    title: "Market Analysis: Crypto Trends Q1 2024",
-  },
-  {
-    id: 3,
-    contentHash: "0xabcdef1234567890abcdef1234567890abcdef12",
-    reporter: "0x742d35Cc6634C0532925a3b8D4C0532925a3b8D4",
-    verified: true,
-    timestamp: "2024-01-14 16:45:10",
-    title: "DeFi Protocol Security Audit Results",
-  },
-];
+import { submitNews } from "@/lib/contracts";
+import { config } from "@/lib/wagmi-config";
 
 const sidebarItems = [
   { title: "Home", icon: Home, id: "home" },
   { title: "Submit News", icon: FileText, id: "submit" },
-  { title: "Admin Panel", icon: Users, id: "admin" },
+  { title: "Register as Reporter", icon: Users, id: "admin" },
+  { title: "Subscription", icon: CreditCard, id: "subscription" },
 ];
 
 function AppSidebar({
@@ -138,83 +139,311 @@ function AppSidebar({
 }
 
 export default function PolkaNewsDashboard() {
+  const { address } = useAccount();
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("home");
+  const { connect, connectors } = useConnect();
+  const { disconnect } = useDisconnect();
   const [isOwner, setIsOwner] = useState(true);
   const [isRegisteredReporter, setIsRegisteredReporter] = useState(true);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const { address } = useAccount();
-
-  // Add the news verification hook and get startListening
-  const { startListening } = useNewsVerification();
+  const [truthTokenBalance, setTruthTokenBalance] = useState(1250.75);
 
   const [reporterAddress, setReporterAddress] = useState("");
-  const [newsContentHash, setNewsContentHash] = useState("");
-  const [newsTitle, setNewsTitle] = useState("");
   const [newsContent, setNewsContent] = useState("");
+  const [newsTitle, setNewsTitle] = useState("");
 
-  const handleRegisterReporter = () => {
-    console.log("Registering reporter:", reporterAddress);
-    setReporterAddress("");
+  const [isSubscribing, setIsSubscribing] = useState(false);
+  const [subscriptionDetails, setSubscriptionDetails] =
+    useState<SubscriptionDetails | null>(null);
+  const [subscriptionFee, setSubscriptionFee] = useState<bigint | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
+
+  const { writeContract, isPending: isRegistering } = useWriteContract();
+  const { readContract } = useReadContract();
+
+  const [newsArticles, setNewsArticles] = useState<any[]>([]);
+  const [newsHashes, setNewsHashes] = useState<string[]>([]);
+  const [page, setPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
+
+  // Get news count
+  const { data: newsCount, isLoading: isLoadingCount } = useReadContract({
+    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+    abi: PolkaNewsABI,
+    functionName: "getNewsCount",
+  });
+
+  // Get paginated news articles
+  const {
+    data: newsData,
+    isLoading: isLoadingNews,
+    error: newsError,
+  } = useReadContract({
+    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+    abi: PolkaNewsABI,
+    functionName: "getNewsArticles",
+    args: [(page - 1) * ITEMS_PER_PAGE, ITEMS_PER_PAGE],
+  });
+
+  // Watch for new news submissions
+  useWatchContractEvent({
+    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+    abi: PolkaNewsABI,
+    eventName: "NewsSubmitted",
+    onLogs: (logs) => {
+      // Refresh the current page when new news is submitted
+      if (page === 1) {
+        // Trigger a refetch of the current page
+        setPage((prev) => prev);
+      }
+    },
+  });
+
+  // Process news data when it changes
+  useEffect(() => {
+    const processNewsData = async () => {
+      if (!newsData) return;
+
+      try {
+        const articles = await Promise.all(
+          newsData.map(async (article: any) => {
+            try {
+              const ipfsContent = await ipfsService.getContent(
+                article.contentHash
+              );
+              return {
+                contentHash: article.contentHash,
+                reporter: article.reporter,
+                verified: article.isVerified,
+                timestamp: new Date(
+                  Number(article.timestamp) * 1000
+                ).toLocaleString(),
+                title: ipfsContent.name,
+                content: ipfsContent.content,
+              };
+            } catch (error) {
+              console.error(
+                `Error fetching IPFS content for ${article.contentHash}:`,
+                error
+              );
+              return null;
+            }
+          })
+        );
+
+        setNewsArticles(articles.filter((article) => article !== null));
+      } catch (error) {
+        console.error("Error processing news data:", error);
+        toast({
+          title: "Error",
+          description: "Failed to process news articles",
+          variant: "destructive",
+        });
+      }
+    };
+
+    processNewsData();
+  }, [newsData]);
+
+  // Load subscription details and token balance
+  useEffect(() => {
+    if (address) {
+      const loadDetails = async () => {
+        try {
+          setIsLoading(true);
+          const [details, fee, balance] = await Promise.all([
+            getSubscriptionDetails(address),
+            getSubscriptionFee(),
+            getTokenBalance(address),
+          ]);
+          setSubscriptionDetails(details);
+          setSubscriptionFee(fee);
+          setTokenBalance(balance);
+        } catch (error) {
+          console.error("Error loading details:", error);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      loadDetails();
+    }
+  }, [address]);
+
+  const handleRegisterReporter = async () => {
+    if (!address) {
+      toast({
+        title: "Wallet Not Connected",
+        description:
+          "Please connect your wallet first to register as a reporter.",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      console.log("Attempting to register reporter with address:", address);
+      await writeContract({
+        address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+        abi: PolkaNewsABI,
+        functionName: "registerReporter",
+      });
+      toast({
+        title: "Registration Successful",
+        description:
+          "You have been registered as a reporter. You can now submit news articles.",
+        variant: "default",
+      });
+    } catch (error) {
+      console.error("Failed to register reporter:", error);
+      toast({
+        title: "Registration Failed",
+        description: "Failed to register as reporter. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const handleSubmitNews = async () => {
     if (!address) {
-      toast.error("Please connect your wallet first");
+      toast({
+        title: "Wallet Not Connected",
+        description: "Please connect your wallet first to submit news.",
+        variant: "destructive",
+      });
       return;
     }
 
     if (!newsTitle || !newsContent) {
-      toast.error("Please fill in all fields");
+      toast({
+        title: "Missing Information",
+        description:
+          "Please provide both title and content for your news article.",
+        variant: "destructive",
+      });
       return;
     }
 
     try {
-      setIsSubmitting(true);
+      setIsLoading(true);
+      console.log("Uploading news content to IPFS...");
 
-      // Prepare content for IPFS
-      const content: Omit<IPFSContent, "id"> = {
+      // Upload content to IPFS
+      const ipfsHash = await ipfsService.uploadContent({
         name: newsTitle,
-        description: newsContent,
-        tags: ["news", "blockchain"],
-        postedBy: address,
+        content: newsContent,
+        reporter: address,
         timestamp: new Date().toISOString(),
-      };
+      });
 
-      // Upload to IPFS
-      toast.info("Uploading content to IPFS...");
-      const ipfsHash = await ipfsService.uploadContent(content);
       console.log("Content uploaded to IPFS:", ipfsHash);
 
-      // Calculate content hash for blockchain
-      const contentHash = ethers.keccak256(ethers.toUtf8Bytes(ipfsHash));
-      console.log("Content hash for blockchain:", contentHash);
+      // Submit news to blockchain using shared contract function
+      await submitNews(ipfsHash);
 
-      // Submit to blockchain
-      toast.info("Submitting to blockchain...");
-      const tx = await submitNews(contentHash);
-      toast.success("News submitted successfully! Waiting for verification...");
-      console.log("Transaction:", tx);
-
-      // Start listening for verification
-      startListening();
+      toast({
+        title: "News Submitted",
+        description:
+          "Your news article has been submitted and is pending verification.",
+        variant: "default",
+      });
 
       // Reset form
-      setNewsContentHash("");
       setNewsTitle("");
       setNewsContent("");
     } catch (error) {
-      console.error("Error submitting news:", error);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to submit news. Please try again."
-      );
+      console.error("Failed to submit news:", error);
+      let errorMessage = "Failed to submit news article. Please try again.";
+
+      if (error instanceof Error) {
+        if (error.message.includes("IPFS")) {
+          errorMessage = "Failed to upload content to IPFS. Please try again.";
+        } else if (error.message.includes("user rejected")) {
+          errorMessage = "Transaction was rejected. Please try again.";
+        }
+      }
+
+      toast({
+        title: "Submission Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
     } finally {
-      setIsSubmitting(false);
+      setIsLoading(false);
     }
   };
 
+  const handleConnect = () => {
+    connect({ connector: connectors[0] });
+  };
+
+  const handlePurchaseSubscription = async () => {
+    if (!address) {
+      toast({
+        title: "Wallet Not Connected",
+        description:
+          "Please connect your wallet first to purchase a subscription.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      console.log("Attempting to purchase subscription");
+
+      // Check if we need to approve tokens
+      if (subscriptionFee) {
+        const allowance = await getAllowance(address);
+        if (allowance < subscriptionFee) {
+          console.log("Approving tokens...");
+          await approveToken(subscriptionFee);
+          toast({
+            title: "Token Approval Successful",
+            description:
+              "Please confirm the subscription purchase transaction.",
+            variant: "default",
+          });
+        }
+      }
+
+      // Purchase subscription
+      await purchaseSubscription();
+      toast({
+        title: "Subscription Successful",
+        description:
+          "Your subscription has been activated. You can now view news articles.",
+        variant: "default",
+      });
+      // Reload subscription details
+      const details = await getSubscriptionDetails(address);
+      setSubscriptionDetails(details);
+    } catch (error) {
+      console.error("Failed to purchase subscription:", error);
+      toast({
+        title: "Subscription Failed",
+        description: "Failed to purchase subscription. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Add shared function for subscription check
+  const checkSubscriptionStatus = (details: SubscriptionDetails | null) => {
+    if (!details) return false;
+    return details.isActive && Number(details.endTime) * 1000 > Date.now();
+  };
+
   const renderContent = () => {
+    // Move declarations outside switch
+    const isSubscribed = checkSubscriptionStatus(subscriptionDetails);
+    const endTime = subscriptionDetails?.endTime
+      ? new Date(Number(subscriptionDetails.endTime) * 1000).toLocaleString()
+      : "N/A";
+    const hasEnoughTokens =
+      tokenBalance && subscriptionFee ? tokenBalance >= subscriptionFee : false;
+
     switch (activeTab) {
       case "home":
         return (
@@ -228,8 +457,12 @@ export default function PolkaNewsDashboard() {
                   <FileText className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">23</div>
-                  <p className="text-xs text-muted-foreground">+3 this week</p>
+                  <div className="text-2xl font-bold">
+                    {newsArticles.length}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Total articles
+                  </p>
                 </CardContent>
               </Card>
 
@@ -241,8 +474,18 @@ export default function PolkaNewsDashboard() {
                   <Shield className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-bold">87.5%</div>
-                  <p className="text-xs text-muted-foreground">Above average</p>
+                  <div className="text-2xl font-bold">
+                    {newsArticles.length > 0
+                      ? `${Math.round(
+                          (newsArticles.filter((n) => n.verified).length /
+                            newsArticles.length) *
+                            100
+                        )}%`
+                      : "0%"}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Verified articles
+                  </p>
                 </CardContent>
               </Card>
             </div>
@@ -255,56 +498,96 @@ export default function PolkaNewsDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Content Hash</TableHead>
-                      <TableHead>Reporter</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Timestamp</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {mockNewsData.map((news) => (
-                      <TableRow key={news.id}>
-                        <TableCell className="font-medium">
-                          {news.title}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {news.contentHash.slice(0, 10)}...
-                          {news.contentHash.slice(-8)}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs">
-                          {news.reporter.slice(0, 6)}...
-                          {news.reporter.slice(-4)}
-                        </TableCell>
-                        <TableCell>
-                          {news.verified ? (
-                            <Badge
-                              variant="default"
-                              className="bg-green-100 text-green-800"
-                            >
-                              <CheckCircle className="mr-1 h-3 w-3" />
-                              Verified
-                            </Badge>
-                          ) : (
-                            <Badge
-                              variant="default"
-                              className="bg-yellow-100 text-yellow-800"
-                            >
-                              <XCircle className="mr-1 h-3 w-3" />
-                              Pending
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {news.timestamp}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                {isLoadingNews ? (
+                  <div className="flex items-center justify-center py-4">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                ) : newsError ? (
+                  <div className="text-center text-destructive">
+                    Failed to load news articles. Please try again.
+                  </div>
+                ) : (
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Title</TableHead>
+                          <TableHead>Content Hash</TableHead>
+                          <TableHead>Reporter</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Timestamp</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {newsArticles.map((news, index) => (
+                          <TableRow key={index}>
+                            <TableCell className="font-medium">
+                              <div
+                                className={`${!isSubscribed ? "blur-sm" : ""}`}
+                              >
+                                {news.title}
+                              </div>
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {news.contentHash.slice(0, 10)}...
+                              {news.contentHash.slice(-8)}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs">
+                              {news.reporter.slice(0, 6)}...
+                              {news.reporter.slice(-4)}
+                            </TableCell>
+                            <TableCell>
+                              {news.verified ? (
+                                <Badge
+                                  variant="default"
+                                  className="bg-green-100 text-green-800"
+                                >
+                                  <CheckCircle className="mr-1 h-3 w-3" />
+                                  Verified
+                                </Badge>
+                              ) : (
+                                <Badge
+                                  variant="secondary"
+                                  className="bg-yellow-100 text-yellow-800"
+                                >
+                                  <XCircle className="mr-1 h-3 w-3" />
+                                  Pending
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {news.timestamp}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    <div className="flex justify-between items-center mt-4">
+                      <Button
+                        variant="outline"
+                        onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                        disabled={page === 1}
+                      >
+                        Previous
+                      </Button>
+                      <span className="text-sm text-muted-foreground">
+                        Page {page}
+                      </span>
+                      <Button
+                        variant="outline"
+                        onClick={() => setPage((prev) => prev + 1)}
+                        disabled={newsArticles.length < ITEMS_PER_PAGE}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {!isSubscribed && (
+                  <div className="mt-4 text-center text-sm text-muted-foreground">
+                    Subscribe to view full article content
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -313,105 +596,155 @@ export default function PolkaNewsDashboard() {
       case "submit":
         return (
           <div className="space-y-6">
-            {isRegisteredReporter ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Submit News Article</CardTitle>
-                  <CardDescription>
-                    Submit a news article for community verification
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="news-title">Article Title</Label>
-                    <Input
-                      id="news-title"
-                      placeholder="Enter article title"
-                      value={newsTitle}
-                      onChange={(e) => setNewsTitle(e.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="news-content">Article Content</Label>
-                    <textarea
-                      id="news-content"
-                      className="w-full min-h-[200px] p-2 border rounded-md"
-                      placeholder="Enter article content"
-                      value={newsContent}
-                      onChange={(e) => setNewsContent(e.target.value)}
-                    />
-                  </div>
-                  <Button
-                    onClick={handleSubmitNews}
-                    className="w-full"
-                    disabled={isSubmitting}
-                  >
-                    {isSubmitting ? "Submitting..." : "Submit News Article"}
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Reporter Registration Required</CardTitle>
-                  <CardDescription>
-                    You must be a registered reporter to submit news articles
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">
-                    Please contact the admin to register as a reporter or wait
-                    for your registration to be approved.
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+            <Card>
+              <CardHeader>
+                <CardTitle>Submit News Article</CardTitle>
+                <CardDescription>
+                  Submit your news article for verification
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="title">Title</Label>
+                  <Input
+                    id="title"
+                    placeholder="Enter news title"
+                    value={newsTitle}
+                    onChange={(e) => setNewsTitle(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="content">Content</Label>
+                  <textarea
+                    id="content"
+                    className="w-full min-h-[200px] p-2 border rounded-md"
+                    placeholder="Enter news content"
+                    value={newsContent}
+                    onChange={(e) => setNewsContent(e.target.value)}
+                  />
+                </div>
+                <Button
+                  onClick={handleSubmitNews}
+                  className="w-full"
+                  disabled={isLoading || !address}
+                >
+                  {isLoading ? "Submitting..." : "Submit News"}
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         );
 
       case "admin":
         return (
           <div className="space-y-6">
-            {isOwner ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Register New Reporter</CardTitle>
-                  <CardDescription>
-                    Add a new reporter to the platform
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="reporter-address">
-                      Reporter Wallet Address
-                    </Label>
-                    <Input
-                      id="reporter-address"
-                      placeholder="0x..."
-                      value={reporterAddress}
-                      onChange={(e) => setReporterAddress(e.target.value)}
-                    />
-                  </div>
-                  <Button onClick={handleRegisterReporter} className="w-full">
-                    Register Reporter
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Access Denied</CardTitle>
-                  <CardDescription>
-                    Only the contract owner can access admin functions
-                  </CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-muted-foreground">
-                    You do not have permission to access the admin panel.
+            <Card>
+              <CardHeader>
+                <CardTitle>Register as Reporter</CardTitle>
+                <CardDescription>
+                  Register yourself as a reporter to submit news articles
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Click the button below to register your connected wallet
+                    address as a reporter. You will be able to submit news
+                    articles after registration.
                   </p>
-                </CardContent>
-              </Card>
-            )}
+                </div>
+                <Button
+                  onClick={handleRegisterReporter}
+                  className="w-full"
+                  disabled={isRegistering || !address}
+                >
+                  {isRegistering ? "Registering..." : "Register as Reporter"}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
+        );
+
+      case "subscription":
+        if (!subscriptionDetails) {
+          return (
+            <div className="flex items-center justify-center py-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          );
+        }
+
+        return (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Subscription Status</CardTitle>
+                <CardDescription>Manage your news subscription</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {isLoading ? (
+                  <div className="flex items-center justify-center py-4">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Status:</span>
+                        <Badge variant={isSubscribed ? "default" : "secondary"}>
+                          {isSubscribed ? "Active" : "Inactive"}
+                        </Badge>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">Expires:</span>
+                        <span className="text-sm text-muted-foreground">
+                          {endTime}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">
+                          Subscription Fee:
+                        </span>
+                        <span className="text-sm text-muted-foreground">
+                          {subscriptionFee
+                            ? `${Number(subscriptionFee) / 1e18} TRUTH`
+                            : "Loading..."}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium">
+                          Your TRUTH Balance:
+                        </span>
+                        <span className="text-sm text-muted-foreground">
+                          {tokenBalance
+                            ? `${Number(tokenBalance) / 1e18} TRUTH`
+                            : "Loading..."}
+                        </span>
+                      </div>
+                    </div>
+                    {!isSubscribed && (
+                      <>
+                        {!hasEnoughTokens && (
+                          <div className="text-sm text-destructive">
+                            You need more TRUTH tokens to purchase a
+                            subscription. Please acquire TRUTH tokens first.
+                          </div>
+                        )}
+                        <Button
+                          onClick={handlePurchaseSubscription}
+                          className="w-full"
+                          disabled={isLoading || !address || !hasEnoughTokens}
+                        >
+                          {isLoading
+                            ? "Processing..."
+                            : "Purchase Subscription"}
+                        </Button>
+                      </>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
           </div>
         );
 
@@ -422,15 +755,52 @@ export default function PolkaNewsDashboard() {
 
   return (
     <SidebarProvider>
-      <div className="flex h-full w-full">
+      <div className="flex min-h-screen w-full">
         <AppSidebar activeTab={activeTab} setActiveTab={setActiveTab} />
-        <div className="flex-1 flex flex-col w-full">
-          <Header />
-          <main className="flex-1 p-6 overflow-auto w-full">
-            {renderContent()}
-          </main>
+        <div className="flex-1">
+          <header className="border-b">
+            <div className="container mx-auto px-4 py-4">
+              <nav className="flex items-center justify-between">
+                <div className="flex items-center space-x-8">
+                  <Link href="/" className="text-xl font-bold">
+                    PolkaNews
+                  </Link>
+                  <div className="flex items-center space-x-4">
+                    <Button
+                      variant={activeTab === "home" ? "default" : "ghost"}
+                      onClick={() => setActiveTab("home")}
+                    >
+                      Home
+                    </Button>
+                    <Button
+                      variant={
+                        activeTab === "subscription" ? "default" : "ghost"
+                      }
+                      onClick={() => setActiveTab("subscription")}
+                    >
+                      Subscription
+                    </Button>
+                    <Button
+                      variant={activeTab === "reporter" ? "default" : "ghost"}
+                      onClick={() => setActiveTab("reporter")}
+                    >
+                      Reporter
+                    </Button>
+                    <Link href="/faucet">
+                      <Button variant="outline">Get Test Tokens</Button>
+                    </Link>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-4">
+                  <ConnectButton />
+                </div>
+              </nav>
+            </div>
+          </header>
+          <main className="flex-1 p-4 lg:p-6">{renderContent()}</main>
         </div>
       </div>
+      <Toaster />
     </SidebarProvider>
   );
 }
