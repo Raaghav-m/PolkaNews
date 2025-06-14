@@ -47,4 +47,13 @@ contract TruthToken is ERC20, Ownable {
         _mint(msg.sender, FAUCET_AMOUNT);
         emit FaucetUsed(msg.sender);
     }
+
+    // Faucet function to mint tokens for testing
+    function faucet(uint256 amount) external {
+        require(amount > 0, "Amount must be greater than 0");
+        require(amount <= 10000 * 10**18, "Maximum 10000 tokens per mint");
+        _mint(msg.sender, amount);
+    }
+
+    
 } 

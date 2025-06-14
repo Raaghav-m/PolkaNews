@@ -21,7 +21,7 @@ async function main() {
   console.log("Deploying contracts with the account:", deployer.address);
 
   try {
-    // Deploy TruthToken first
+    // 1. Deploy TruthToken first
     console.log("\nDeploying TruthToken...");
     const TruthToken = await ethers.getContractFactory("TruthToken");
     const truthToken = await TruthToken.deploy();
@@ -29,21 +29,30 @@ async function main() {
     const truthTokenAddress = await truthToken.getAddress();
     console.log("TruthToken deployed to:", truthTokenAddress);
 
-    // Deploy SubscriptionManager
+    // 2. Deploy Sources
+    console.log("\nDeploying Sources...");
+    const Sources = await ethers.getContractFactory("Sources");
+    const sources = await Sources.deploy(truthTokenAddress);
+    await sources.waitForDeployment();
+    const sourcesAddress = await sources.getAddress();
+    console.log("Sources deployed to:", sourcesAddress);
+
+    // 3. Deploy SubscriptionManager
     console.log("\nDeploying SubscriptionManager...");
     const SubscriptionManager = await ethers.getContractFactory(
       "SubscriptionManager"
     );
     const subscriptionManager = await SubscriptionManager.deploy(
       truthTokenAddress,
-      ethers.parseEther("5"), // 5 tokens for subscription
+      sourcesAddress,
+      ethers.parseEther("10"), // 10 tokens for subscription
       30 * 24 * 60 * 60 // 30 days in seconds
     );
     await subscriptionManager.waitForDeployment();
     const subscriptionManagerAddress = await subscriptionManager.getAddress();
     console.log("SubscriptionManager deployed to:", subscriptionManagerAddress);
 
-    // Deploy PolkaNews with minimal constructor parameters
+    // 4. Deploy PolkaNews
     console.log("\nDeploying PolkaNews...");
     const PolkaNews = await ethers.getContractFactory("PolkaNews");
     const polkaNews = await PolkaNews.deploy(
@@ -59,30 +68,30 @@ async function main() {
 
     // Set PolkaNews contract in TruthToken
     console.log("Setting PolkaNews contract in TruthToken...");
-    const setPolkaNewsTx = await truthToken.setPolkaNewsContract(
-      polkaNewsAddress
-    );
+    const setPolkaNewsTx =
+      await truthToken.setPolkaNewsContract(polkaNewsAddress);
     await setPolkaNewsTx.wait();
     console.log("✓ PolkaNews contract set in TruthToken");
 
-    // Set oracle address in PolkaNews
-    const defaultOracle = "0x07b1DAf7b72dd9E0F6D57e4B9C8cFC00719096f9";
-    console.log("Setting Oracle in PolkaNews...");
-    const setOracleTx = await polkaNews.setOracle(defaultOracle);
-    await setOracleTx.wait();
-    console.log("✓ Oracle set in PolkaNews");
+    // Set verifier address in PolkaNews
+    const defaultVerifier = "0x07b1DAf7b72dd9E0F6D57e4B9C8cFC00719096f9";
+    console.log("Setting Verifier in PolkaNews...");
+    const setVerifierTx = await polkaNews.setVerifier(defaultVerifier);
+    await setVerifierTx.wait();
+    console.log("✓ Verifier set in PolkaNews");
 
     // Verify the setup
     console.log("\nVerifying setup...");
     const polkaNewsContractInToken = await truthToken.polkaNewsContract();
-    const oracleInPolkaNews = await polkaNews.oracle();
+    const verifierInPolkaNews = await polkaNews.verifier();
 
     console.log("\nDeployment Summary:");
     console.log("------------------");
     console.log("TruthToken:", truthTokenAddress);
+    console.log("Sources:", sourcesAddress);
     console.log("SubscriptionManager:", subscriptionManagerAddress);
     console.log("PolkaNews:", polkaNewsAddress);
-    console.log("Oracle:", defaultOracle);
+    console.log("Verifier:", defaultVerifier);
     console.log("\nVerification Results:");
     console.log("-------------------");
     console.log(
@@ -90,22 +99,24 @@ async function main() {
       polkaNewsContractInToken === polkaNewsAddress ? "✓" : "❌"
     );
     console.log(
-      "Oracle in PolkaNews:",
-      oracleInPolkaNews === defaultOracle ? "✓" : "❌"
+      "Verifier in PolkaNews:",
+      verifierInPolkaNews === defaultVerifier ? "✓" : "❌"
     );
 
     // Attempt to verify contracts on explorer (if not on local network)
     if (network.name !== "hardhat" && network.name !== "localhost") {
       await verifyContract(truthTokenAddress);
+      await verifyContract(sourcesAddress);
       await verifyContract(subscriptionManagerAddress);
       await verifyContract(polkaNewsAddress);
     }
 
     return {
       truthToken: truthTokenAddress,
+      sources: sourcesAddress,
       subscriptionManager: subscriptionManagerAddress,
       polkaNews: polkaNewsAddress,
-      oracle: defaultOracle,
+      verifier: defaultVerifier,
     };
   } catch (error) {
     console.error("\nDeployment failed!");

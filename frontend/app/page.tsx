@@ -79,12 +79,23 @@ import { ConnectButton } from "@/components/ui/connect-button";
 import { ipfsService } from "@/lib/ipfs";
 import { submitNews } from "@/lib/contracts";
 import { config } from "@/lib/wagmi-config";
+import { ethers } from "ethers";
+import {
+  getActiveSources,
+  getInvestorSources,
+  getInvestorRewards,
+  getSourceDetails,
+  addSource,
+  claimRewards,
+  challengeSource,
+} from "@/lib/sources";
 
 const sidebarItems = [
   { title: "Home", icon: Home, id: "home" },
   { title: "Submit News", icon: FileText, id: "submit" },
   { title: "Register as Reporter", icon: Users, id: "admin" },
   { title: "Subscription", icon: CreditCard, id: "subscription" },
+  { title: "Investor", icon: Coins, id: "investor" },
 ];
 
 function AppSidebar({
@@ -290,7 +301,9 @@ export default function PolkaNewsDashboard() {
     try {
       console.log("Attempting to register reporter with address:", address);
       await writeContract({
-        address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+        address:
+          (process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`) ||
+          "0x74863B9AAECCB34238FA5f607B03242ddc62e1aF",
         abi: PolkaNewsABI,
         functionName: "registerReporter",
       });
@@ -440,6 +453,132 @@ export default function PolkaNewsDashboard() {
   const checkSubscriptionStatus = (details: SubscriptionDetails | null) => {
     if (!details) return false;
     return details.isActive && Number(details.endTime) * 1000 > Date.now();
+  };
+
+  const [newSourceName, setNewSourceName] = useState("");
+  const [activeSources, setActiveSources] = useState<string[]>([]);
+  const [investorSources, setInvestorSources] = useState<string[]>([]);
+  const [selectedSource, setSelectedSource] = useState<string | null>(null);
+  const [sourceDetails, setSourceDetails] = useState<any>(null);
+  const [pendingRewards, setPendingRewards] = useState("0");
+
+  // Add investor data fetching
+  useEffect(() => {
+    const fetchInvestorData = async () => {
+      if (!address) return;
+      try {
+        const [activeSourcesData, investorSourcesData, rewardsData] =
+          await Promise.all([
+            getActiveSources(),
+            getInvestorSources(address),
+            getInvestorRewards(address),
+          ]);
+        setActiveSources(activeSourcesData as string[]);
+        setInvestorSources(investorSourcesData as string[]);
+        setPendingRewards(ethers.formatEther(rewardsData as bigint));
+      } catch (error) {
+        console.error("Error fetching investor data:", error);
+        toast({
+          title: "Error",
+          description: "Failed to fetch investor data",
+          variant: "destructive",
+        });
+      }
+    };
+
+    if (activeTab === "investor") {
+      fetchInvestorData();
+    }
+  }, [address, activeTab]);
+
+  // Add source details fetching
+  useEffect(() => {
+    const fetchSourceDetails = async () => {
+      if (!selectedSource) return;
+      try {
+        const details = await getSourceDetails(selectedSource);
+        setSourceDetails(details);
+      } catch (error) {
+        console.error("Error fetching source details:", error);
+        toast({
+          title: "Error",
+          description: "Failed to fetch source details",
+          variant: "destructive",
+        });
+      }
+    };
+
+    fetchSourceDetails();
+  }, [selectedSource]);
+
+  // Add investor handlers
+  const handleAddSource = async () => {
+    if (!newSourceName) {
+      toast({
+        title: "Error",
+        description: "Please enter a source name",
+        variant: "destructive",
+      });
+      return;
+    }
+    try {
+      setIsLoading(true);
+      await addSource(newSourceName);
+      setNewSourceName("");
+      toast({
+        title: "Success",
+        description: "Source added successfully",
+        variant: "default",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to add source",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClaimRewards = async () => {
+    try {
+      setIsLoading(true);
+      await claimRewards();
+      toast({
+        title: "Success",
+        description: "Rewards claimed successfully",
+        variant: "default",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to claim rewards",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleChallengeSource = async (sourceName: string) => {
+    try {
+      setIsLoading(true);
+      await challengeSource(sourceName);
+      toast({
+        title: "Success",
+        description: "Source challenged successfully",
+        variant: "default",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to challenge source",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const renderContent = () => {
@@ -755,6 +894,142 @@ export default function PolkaNewsDashboard() {
           </div>
         );
 
+      case "investor":
+        return (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Investor Dashboard</CardTitle>
+                <CardDescription>
+                  Manage your news sources and rewards
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-lg font-medium">
+                      Your Sources: {investorSources.length}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Pending Rewards: {pendingRewards} TRUTH
+                    </p>
+                  </div>
+                  <Button onClick={handleClaimRewards} disabled={isLoading}>
+                    {isLoading ? "Claiming..." : "Claim Rewards"}
+                  </Button>
+                </div>
+
+                <div className="bg-muted p-4 rounded-lg">
+                  <h3 className="text-lg font-medium mb-4">Add New Source</h3>
+                  <div className="flex gap-4">
+                    <Input
+                      value={newSourceName}
+                      onChange={(e) => setNewSourceName(e.target.value)}
+                      placeholder="Enter source name"
+                    />
+                    <Button onClick={handleAddSource} disabled={isLoading}>
+                      {isLoading ? "Adding..." : "Add Source"}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Source Name</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {activeSources.map((name) => (
+                        <TableRow key={name}>
+                          <TableCell className="font-medium">{name}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="default"
+                              className="bg-green-100 text-green-800"
+                            >
+                              Active
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              onClick={() => setSelectedSource(name)}
+                              className="mr-2"
+                            >
+                              Details
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              onClick={() => handleChallengeSource(name)}
+                            >
+                              Challenge
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+
+            {selectedSource && sourceDetails && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Source Details</CardTitle>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setSelectedSource(null)}
+                    className="absolute right-4 top-4"
+                  >
+                    ×
+                  </Button>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4">
+                    <div>
+                      <Label>Name</Label>
+                      <p>{sourceDetails.name}</p>
+                    </div>
+                    <div>
+                      <Label>Investor</Label>
+                      <p className="font-mono text-sm">
+                        {sourceDetails.investor}
+                      </p>
+                    </div>
+                    <div>
+                      <Label>Status</Label>
+                      <Badge
+                        variant={
+                          sourceDetails.isActive ? "default" : "secondary"
+                        }
+                      >
+                        {sourceDetails.isActive ? "Active" : "Inactive"}
+                      </Badge>
+                    </div>
+                    <div>
+                      <Label>Stake Amount</Label>
+                      <p>
+                        {ethers.formatEther(sourceDetails.stakeAmount)} TRUTH
+                      </p>
+                    </div>
+                    <div>
+                      <Label>Total Rewards</Label>
+                      <p>
+                        {ethers.formatEther(sourceDetails.totalRewards)} TRUTH
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        );
+
       default:
         return null;
     }
@@ -786,6 +1061,12 @@ export default function PolkaNewsDashboard() {
                       onClick={() => setActiveTab("subscription")}
                     >
                       Subscription
+                    </Button>
+                    <Button
+                      variant={activeTab === "investor" ? "default" : "ghost"}
+                      onClick={() => setActiveTab("investor")}
+                    >
+                      Investor
                     </Button>
                     <Link href="/faucet">
                       <Button variant="outline">Get Test Tokens</Button>

@@ -5,11 +5,12 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./SubscriptionManager.sol";
 import "./TruthToken.sol";
+import "./interface/IEZKLVerifier.sol";
 
 contract PolkaNews is Ownable {
     TruthToken public truthToken;
     SubscriptionManager public subscriptionManager;
-    address public oracle;
+    address public verifier;
 
     struct NewsArticle {
         string contentHash;
@@ -29,7 +30,8 @@ contract PolkaNews is Ownable {
     event NewsSubmitted(string indexed contentHash, address indexed reporter);
     event NewsVerified(string indexed contentHash, bool isVerified);
     event ReporterRegistered(address indexed reporter);
-    event OracleUpdated(address indexed newOracle);
+    event ReporterRemoved(address indexed reporter);
+    event VerifierUpdated(address indexed newVerifier);
 
     constructor(
         address _truthToken,
@@ -65,11 +67,14 @@ contract PolkaNews is Ownable {
         emit NewsSubmitted(contentHash, msg.sender);
     }
 
-    // Verify news (only oracle)
-    function verifyNews(string calldata contentHash, bool isVerified) external {
-        require(msg.sender == oracle, "Only oracle can verify");
+    // Verify news (only verifier)
+    function verifyNews(string calldata contentHash, bool isVerified,bytes calldata proof,uint256[] calldata instances) external {
+        require(msg.sender == verifier, "Only verifier can verify");
         require(newsByHash[contentHash].reporter != address(0), "News not found");
         require(!newsByHash[contentHash].isVerified, "Already verified");
+
+        IEZKLVerifier iezklVerifier=IEZKLVerifier(verifier);
+        require(iezklVerifier.verifyProof(proof, instances),"Model not verified");
 
         newsByHash[contentHash].isVerified = isVerified;
         
@@ -144,10 +149,27 @@ contract PolkaNews is Ownable {
         emit ReporterRegistered(reporter);
     }
 
-    // Set oracle address (only owner)
-    function setOracle(address _oracle) external onlyOwner {
-        require(_oracle != address(0), "Invalid oracle address");
-        oracle = _oracle;
-        emit OracleUpdated(_oracle);
+    // Remove reporter (only owner)
+    function removeReporter(address reporter) external onlyOwner {
+        require(reporters[reporter], "Not a registered reporter");
+        reporters[reporter] = false;
+        emit ReporterRemoved(reporter);
+    }
+
+    // Check if address is a reporter
+    function isReporter(address reporter) external view returns (bool) {
+        return reporters[reporter];
+    }
+
+    // Set verifier address (only owner)
+    function setVerifier(address _verifier) external onlyOwner {
+        require(_verifier != address(0), "Invalid verifier address");
+        verifier = _verifier;
+        emit VerifierUpdated(_verifier);
+    }
+
+    // Get verifier address
+    function getVerifier() external view returns (address) {
+        return verifier;
     }
 } 
