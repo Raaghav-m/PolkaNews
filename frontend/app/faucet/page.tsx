@@ -31,6 +31,12 @@ export default function FaucetPage() {
     },
   });
 
+  // Read faucet amount
+  const { data: faucetAmount } = useReadContract({
+    ...truthTokenConfig,
+    functionName: "FAUCET_AMOUNT",
+  });
+
   // Write contract for using faucet
   const { writeContract, isPending } = useWriteContract();
 
@@ -58,16 +64,26 @@ export default function FaucetPage() {
       return;
     }
 
+    if (!faucetAmount) {
+      toast({
+        title: "Error",
+        description: "Failed to get faucet amount",
+        variant: "destructive",
+      });
+      return;
+    }
+
     try {
       setIsLoading(true);
       const hash = await writeContract({
         ...truthTokenConfig,
-        functionName: "useFaucet",
+        functionName: "faucet",
+        args: [faucetAmount],
       });
 
       toast({
         title: "Success",
-        description: "You've received 100 TRUTH tokens!",
+        description: `You've received ${Number(faucetAmount) / 1e18} TRUTH tokens!`,
       });
       // Refresh balance
       const balance = await getTokenBalance(address);

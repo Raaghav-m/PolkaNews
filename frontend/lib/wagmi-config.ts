@@ -1,5 +1,6 @@
 import { http, createConfig } from "wagmi";
 import { metaMask } from "wagmi/connectors";
+import { moonbaseAlpha } from "wagmi/chains";
 
 // Define Paseo Asset Hub chain
 const paseoAssetHub = {
@@ -51,10 +52,10 @@ console.log("Chain Configuration:", {
 });
 
 export const config = createConfig({
-  chains: [paseoAssetHub],
+  chains: [moonbaseAlpha],
   connectors: [metaMask()],
   transports: {
-    [paseoAssetHub.id]: http(),
+    [moonbaseAlpha.id]: http(),
   },
 });
 

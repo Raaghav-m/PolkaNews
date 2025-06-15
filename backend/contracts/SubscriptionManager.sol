@@ -56,9 +56,9 @@ contract SubscriptionManager is Ownable {
             isActive: true
         });
 
-        // Transfer reward tokens to TruthToken contract
+        // Transfer reward tokens to Sources contract for distribution
         require(
-            truthToken.transfer(address(truthToken), REWARD_PER_SUBSCRIPTION),
+            truthToken.transfer(address(sources), REWARD_PER_SUBSCRIPTION),
             "Reward transfer failed"
         );
 

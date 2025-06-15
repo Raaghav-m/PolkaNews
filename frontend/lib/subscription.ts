@@ -8,13 +8,10 @@ export const SUBSCRIPTION_ADDRESS = process.env
   .NEXT_PUBLIC_SUBSCRIPTION_ADDRESS as `0x${string}`;
 export const TRUTH_TOKEN_ADDRESS = process.env
   .NEXT_PUBLIC_TRUTH_TOKEN_ADDRESS as `0x${string}`;
-export const FAUCET_ADDRESS = process.env
-  .NEXT_PUBLIC_FAUCET_ADDRESS as `0x${string}`;
 
 console.log("Contract Addresses:", {
   subscription: SUBSCRIPTION_ADDRESS,
   truthToken: TRUTH_TOKEN_ADDRESS,
-  faucet: FAUCET_ADDRESS,
 });
 
 export const subscriptionConfig = {
@@ -71,15 +68,18 @@ export async function getSubscriptionDetails(
   }
 }
 
-export async function getSubscriptionFee(): Promise<bigint> {
+export async function getSubscriptionFee(): Promise<string> {
   try {
     console.log("Getting subscription fee");
     const result = (await readContract(config, {
       ...subscriptionConfig,
       functionName: "subscriptionFee",
     })) as bigint;
-    console.log("Subscription fee:", result.toString());
-    return result;
+
+    // Use the raw result value
+    const fee = result.toString();
+    console.log("Subscription fee:", fee);
+    return fee;
   } catch (error) {
     console.error("Error fetching subscription fee:", {
       error,

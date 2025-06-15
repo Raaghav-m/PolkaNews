@@ -53,11 +53,13 @@ import {
   useDisconnect,
   useWriteContract,
   useWaitForTransactionReceipt,
-  useContractRead,
   useReadContract,
   useWatchContractEvent,
   getContractEvents,
   usePublicClient,
+  useContractRead,
+  useContractWrite,
+  useWaitForTransaction,
 } from "wagmi";
 import { metaMask } from "wagmi/connectors";
 import { WalletConnect } from "@/components/WalletConnect";
@@ -79,16 +81,21 @@ import { ConnectButton } from "@/components/ui/connect-button";
 import { ipfsService } from "@/lib/ipfs";
 import { submitNews } from "@/lib/contracts";
 import { config } from "@/lib/wagmi-config";
-import { ethers } from "ethers";
+import { formatEther } from "viem";
 import {
+  getSourceDetails,
   getActiveSources,
   getInvestorSources,
   getInvestorRewards,
-  getSourceDetails,
+  getStakeAmount,
   addSource,
-  claimRewards,
   challengeSource,
+  claimRewards,
+  distributeRewards,
+  approveTokens,
 } from "@/lib/sources";
+import SourcesABI from "@/lib/abi/SourcesABI.json";
+import TruthTokenABI from "@/lib/abi/TruthTokenABI.json";
 
 const sidebarItems = [
   { title: "Home", icon: Home, id: "home" },
@@ -150,8 +157,43 @@ function AppSidebar({
   );
 }
 
+// Add Sources contract config
+export const sourcesConfig = {
+  address: process.env.NEXT_PUBLIC_SOURCES_ADDRESS as `0x${string}`,
+  abi: SourcesABI,
+} as const;
+
+// Helper functions for contract interactions
+const useContractRead = (config: any) => {
+  const { data, isError, isLoading } = useReadContract(config);
+  return { data, isError, isLoading };
+};
+
+interface IPFSContent {
+  id?: string;
+  name: string;
+  content: string;
+  reporter: string;
+  timestamp: string;
+}
+
+interface NewsArticle {
+  contentHash: string;
+  reporter: string;
+  timestamp: string;
+  isVerified: boolean;
+  title: string;
+  content: string;
+}
+
+interface SubscriptionDetails {
+  isSubscribed: boolean;
+  expiryDate: string;
+  subscriptionType: string;
+}
+
 export default function PolkaNewsDashboard() {
-  const { address } = useAccount();
+  const { address, isConnected } = useAccount();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState("home");
   const { connect, connectors } = useConnect();
@@ -159,110 +201,191 @@ export default function PolkaNewsDashboard() {
   const [isOwner, setIsOwner] = useState(true);
   const [isRegisteredReporter, setIsRegisteredReporter] = useState(true);
   const [truthTokenBalance, setTruthTokenBalance] = useState(1250.75);
-
-  const [reporterAddress, setReporterAddress] = useState("");
-  const [newsContent, setNewsContent] = useState("");
+  const [newsArticles, setNewsArticles] = useState<NewsArticle[]>([]);
   const [newsTitle, setNewsTitle] = useState("");
-
+  const [newsContent, setNewsContent] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingNews, setIsLoadingNews] = useState(false);
+  const [isLoadingClaim, setIsLoadingClaim] = useState(false);
+  const [isLoadingAddSource, setIsLoadingAddSource] = useState(false);
+  const [newsError, setNewsError] = useState<string | null>(null);
   const [isSubscribing, setIsSubscribing] = useState(false);
   const [subscriptionDetails, setSubscriptionDetails] =
     useState<SubscriptionDetails | null>(null);
   const [subscriptionFee, setSubscriptionFee] = useState<bigint | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
   const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
 
-  const { writeContract, isPending: isRegistering } = useWriteContract();
-  const { readContract } = useReadContract();
-
-  const [newsArticles, setNewsArticles] = useState<any[]>([]);
-  const [newsHashes, setNewsHashes] = useState<string[]>([]);
-  const [page, setPage] = useState(1);
-  const ITEMS_PER_PAGE = 10;
-
-  const publicClient = usePublicClient();
-
-  // Get news count
-  const { data: newsCount, isLoading: isLoadingCount } = useReadContract({
-    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
-    abi: PolkaNewsABI,
-    functionName: "getNewsCount",
+  // Contract write hook
+  const { writeContract, isPending: isContractPending } = useWriteContract();
+  const [pendingHash, setPendingHash] = useState<`0x${string}` | undefined>();
+  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+    hash: pendingHash,
   });
 
-  // Get paginated news articles
-  const {
-    data: newsData,
-    isLoading: isLoadingNews,
-    error: newsError,
-  } = useReadContract({
-    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
-    abi: PolkaNewsABI,
-    functionName: "getNewsArticles",
-    args: [(page - 1) * ITEMS_PER_PAGE, ITEMS_PER_PAGE],
+  // Contract read hooks
+  const { data: subscriptionFeeData } = useReadContract({
+    address: process.env
+      .NEXT_PUBLIC_SUBSCRIPTION_MANAGER_ADDRESS as `0x${string}`,
+    abi: SubscriptionManagerABI,
+    functionName: "subscriptionFee",
   });
 
-  // Process news data when it changes
+  const { data: stakeAmountData } = useReadContract({
+    address: process.env.NEXT_PUBLIC_SOURCES_ADDRESS as `0x${string}`,
+    abi: SourcesABI,
+    functionName: "STAKE_AMOUNT",
+  });
+
+  const { data: tokenBalanceData } = useReadContract({
+    address: process.env.NEXT_PUBLIC_TRUTH_TOKEN_ADDRESS as `0x${string}`,
+    abi: TruthTokenABI,
+    functionName: "balanceOf",
+    args: [address],
+  });
+
+  const provider = usePublicClient();
+
+  // Load news articles
   useEffect(() => {
-    const processNewsData = async () => {
-      if (!newsData) return;
+    const loadNews = async () => {
+      if (!address) return;
 
       try {
-        console.log("Raw news data from contract:", newsData);
+        setIsLoadingNews(true);
+        setNewsError(null);
+        const { data: newsData } = await useReadContract({
+          address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+          abi: PolkaNewsABI,
+          functionName: "getNewsArticles",
+          args: [0, 10], // Get first 10 articles
+        });
 
-        const articles = await Promise.all(
-          newsData.map(async (article: any) => {
-            try {
-              console.log("Processing article:", article);
-              const ipfsContent = await ipfsService.getContent(
-                article.contentHash
-              );
-              console.log("IPFS content for article:", ipfsContent);
-
-              // Get article details using public client
-              const articleDetails = await publicClient.readContract({
-                address: process.env
-                  .NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
-                abi: PolkaNewsABI,
-                functionName: "getNewsByHash",
-                args: [article.contentHash],
-              });
-
-              const processedArticle = {
-                contentHash: article.contentHash,
-                reporter: article.reporter,
-                isVerified: articleDetails[2], // Use isVerified from getNewsByHash
-                timestamp: new Date(
-                  Number(article.timestamp) * 1000
-                ).toLocaleString(),
-                title: ipfsContent.name,
-                content: ipfsContent.content,
-              };
-              console.log("Processed article:", processedArticle);
-              return processedArticle;
-            } catch (error) {
-              console.error(
-                `Error fetching IPFS content for ${article.contentHash}:`,
-                error
-              );
-              return null;
-            }
-          })
-        );
-
-        const filteredArticles = articles.filter((article) => article !== null);
-        console.log("Final processed articles:", filteredArticles);
-        setNewsArticles(filteredArticles);
+        if (newsData) {
+          await processNewsData(newsData);
+        }
       } catch (error) {
-        console.error("Error processing news data:", error);
+        console.error("Error loading news:", error);
+        setNewsError("Failed to load news articles");
         toast({
           title: "Error",
-          description: "Failed to process news articles",
+          description: "Failed to load news articles",
           variant: "destructive",
         });
+      } finally {
+        setIsLoadingNews(false);
       }
     };
 
-    processNewsData();
-  }, [newsData, publicClient]);
+    loadNews();
+  }, [address]);
+
+  // Process news data
+  const processNewsData = async (newsData: NewsArticle[]) => {
+    try {
+      const articles = await Promise.all(
+        newsData.map(async (article) => {
+          try {
+            const ipfsContent = await ipfsService.getContent(
+              article.contentHash
+            );
+            if (!ipfsContent) return null;
+
+            return {
+              ...article,
+              title: ipfsContent.name,
+              content: ipfsContent.content,
+            };
+          } catch (error) {
+            console.error("Error processing article:", error);
+            return null;
+          }
+        })
+      );
+
+      const filteredArticles = articles.filter(
+        (article): article is NewsArticle => article !== null
+      );
+      setNewsArticles(filteredArticles);
+    } catch (error) {
+      console.error("Error processing news data:", error);
+    }
+  };
+
+  // Add this hook at the component level
+  const { data: isReporterData } = useReadContract({
+    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+    abi: PolkaNewsABI,
+    functionName: "isReporter",
+    args: [address],
+    query: {
+      enabled: !!address,
+    },
+  });
+
+  // Update handleSubmitNews
+  const handleSubmitNews = async () => {
+    if (!address || !newsTitle || !newsContent) {
+      toast({
+        title: "Error",
+        description: "Please connect your wallet and fill in all fields",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+
+      // Check if user is registered reporter
+      if (!isReporterData) {
+        toast({
+          title: "Error",
+          description: "You must be a registered reporter to submit news",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Upload to IPFS
+      const ipfsHash = await ipfsService.uploadContent({
+        name: newsTitle,
+        content: newsContent,
+        reporter: address,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Submit news
+      const hash = await writeContract({
+        address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+        abi: PolkaNewsABI,
+        functionName: "submitNews",
+        args: [ipfsHash],
+      });
+
+      if (hash) {
+        setPendingHash(hash);
+        setNewsTitle("");
+        setNewsContent("");
+      }
+    } catch (error: any) {
+      console.error("Error submitting news:", error);
+      let errorMessage = "Failed to submit news";
+
+      if (error.message.includes("insufficient funds")) {
+        errorMessage = "Insufficient funds for gas";
+      } else if (error.message.includes("user rejected")) {
+        errorMessage = "Transaction was rejected";
+      }
+
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   // Load subscription details and token balance
   useEffect(() => {
@@ -287,114 +410,6 @@ export default function PolkaNewsDashboard() {
       loadDetails();
     }
   }, [address]);
-
-  const handleRegisterReporter = async () => {
-    if (!address) {
-      toast({
-        title: "Wallet Not Connected",
-        description:
-          "Please connect your wallet first to register as a reporter.",
-        variant: "destructive",
-      });
-      return;
-    }
-    try {
-      console.log("Attempting to register reporter with address:", address);
-      await writeContract({
-        address:
-          (process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`) ||
-          "0x74863B9AAECCB34238FA5f607B03242ddc62e1aF",
-        abi: PolkaNewsABI,
-        functionName: "registerReporter",
-      });
-      toast({
-        title: "Registration Successful",
-        description:
-          "You have been registered as a reporter. You can now submit news articles.",
-        variant: "default",
-      });
-    } catch (error) {
-      console.error("Failed to register reporter:", error);
-      toast({
-        title: "Registration Failed",
-        description: "Failed to register as reporter. Please try again.",
-        variant: "destructive",
-      });
-    }
-  };
-
-  const handleSubmitNews = async () => {
-    if (!address) {
-      toast({
-        title: "Wallet Not Connected",
-        description: "Please connect your wallet first to submit news.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    if (!newsTitle || !newsContent) {
-      toast({
-        title: "Missing Information",
-        description:
-          "Please provide both title and content for your news article.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      console.log("Uploading news content to IPFS...");
-
-      // Upload content to IPFS
-      const ipfsHash = await ipfsService.uploadContent({
-        name: newsTitle,
-        content: newsContent,
-        reporter: address,
-        timestamp: new Date().toISOString(),
-      });
-
-      console.log("Content uploaded to IPFS:", ipfsHash);
-
-      // Submit news to blockchain using shared contract function
-      await submitNews(ipfsHash);
-
-      toast({
-        title: "News Submitted",
-        description:
-          "Your news article has been submitted and is pending verification.",
-        variant: "default",
-      });
-
-      // Reset form
-      setNewsTitle("");
-      setNewsContent("");
-    } catch (error) {
-      console.error("Failed to submit news:", error);
-      let errorMessage = "Failed to submit news article. Please try again.";
-
-      if (error instanceof Error) {
-        if (error.message.includes("IPFS")) {
-          errorMessage = "Failed to upload content to IPFS. Please try again.";
-        } else if (error.message.includes("user rejected")) {
-          errorMessage = "Transaction was rejected. Please try again.";
-        }
-      }
-
-      toast({
-        title: "Submission Failed",
-        description: errorMessage,
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleConnect = () => {
-    connect({ connector: connectors[0] });
-  };
 
   const handlePurchaseSubscription = async () => {
     if (!address) {
@@ -455,95 +470,217 @@ export default function PolkaNewsDashboard() {
     return details.isActive && Number(details.endTime) * 1000 > Date.now();
   };
 
-  const [newSourceName, setNewSourceName] = useState("");
-  const [activeSources, setActiveSources] = useState<string[]>([]);
-  const [investorSources, setInvestorSources] = useState<string[]>([]);
-  const [selectedSource, setSelectedSource] = useState<string | null>(null);
-  const [sourceDetails, setSourceDetails] = useState<any>(null);
-  const [pendingRewards, setPendingRewards] = useState("0");
-
-  // Add investor data fetching
-  useEffect(() => {
-    const fetchInvestorData = async () => {
-      if (!address) return;
-      try {
-        const [activeSourcesData, investorSourcesData, rewardsData] =
-          await Promise.all([
-            getActiveSources(),
-            getInvestorSources(address),
-            getInvestorRewards(address),
-          ]);
-        setActiveSources(activeSourcesData as string[]);
-        setInvestorSources(investorSourcesData as string[]);
-        setPendingRewards(ethers.formatEther(rewardsData as bigint));
-      } catch (error) {
-        console.error("Error fetching investor data:", error);
-        toast({
-          title: "Error",
-          description: "Failed to fetch investor data",
-          variant: "destructive",
-        });
-      }
-    };
-
-    if (activeTab === "investor") {
-      fetchInvestorData();
-    }
-  }, [address, activeTab]);
-
-  // Add source details fetching
-  useEffect(() => {
-    const fetchSourceDetails = async () => {
-      if (!selectedSource) return;
-      try {
-        const details = await getSourceDetails(selectedSource);
-        setSourceDetails(details);
-      } catch (error) {
-        console.error("Error fetching source details:", error);
-        toast({
-          title: "Error",
-          description: "Failed to fetch source details",
-          variant: "destructive",
-        });
-      }
-    };
-
-    fetchSourceDetails();
-  }, [selectedSource]);
-
-  // Add investor handlers
-  const handleAddSource = async () => {
-    if (!newSourceName) {
+  const handleRegisterReporter = async () => {
+    if (!address) {
       toast({
-        title: "Error",
-        description: "Please enter a source name",
+        title: "Wallet Not Connected",
+        description:
+          "Please connect your wallet first to register as a reporter.",
         variant: "destructive",
       });
       return;
     }
     try {
-      setIsLoading(true);
-      await addSource(newSourceName);
-      setNewSourceName("");
+      console.log("Attempting to register reporter with address:", address);
+      await writeContract({
+        address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+        abi: PolkaNewsABI,
+        functionName: "registerReporter",
+      });
+      toast({
+        title: "Registration Successful",
+        description:
+          "You have been registered as a reporter. You can now submit news articles.",
+        variant: "default",
+      });
+    } catch (error) {
+      console.error("Failed to register reporter:", error);
+      toast({
+        title: "Registration Failed",
+        description: "Failed to register as reporter. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleConnect = () => {
+    connect({ connector: connectors[0] });
+  };
+
+  // Helper functions
+  const checkTokenBalance = async (address: string, amount: bigint) => {
+    const { data: balance } = await useContractRead({
+      address: process.env.NEXT_PUBLIC_TRUTH_TOKEN_ADDRESS as `0x${string}`,
+      abi: TruthTokenABI,
+      functionName: "balanceOf",
+      args: [address],
+    });
+    return (balance as bigint) >= amount;
+  };
+
+  const [newSourceUrl, setNewSourceUrl] = useState("");
+  const [activeSources, setActiveSources] = useState<string[]>([]);
+  const [investorSources, setInvestorSources] = useState<string[]>([]);
+  const [selectedSource, setSelectedSource] = useState<string | null>(null);
+  const [sourceDetails, setSourceDetails] = useState<any>(null);
+  const [pendingRewards, setPendingRewards] = useState<bigint>(0n);
+
+  // Add these hooks at the top level of the component
+  const { data: activeSourcesData } = useReadContract({
+    ...sourcesConfig,
+    functionName: "getActiveSources",
+    query: {
+      enabled: activeTab === "investor" && !!address,
+    },
+  });
+
+  const { data: investorSourcesData } = useReadContract({
+    ...sourcesConfig,
+    functionName: "getInvestorSources",
+    args: [address],
+    query: {
+      enabled: activeTab === "investor" && !!address,
+    },
+  });
+
+  const { data: rewardsData } = useReadContract({
+    ...sourcesConfig,
+    functionName: "getInvestorRewards",
+    args: [address],
+    query: {
+      enabled: activeTab === "investor" && !!address,
+    },
+  });
+
+  // Update the useEffect to use the hook data
+  useEffect(() => {
+    if (activeTab === "investor" && address) {
+      if (activeSourcesData) {
+        setActiveSources(activeSourcesData as string[]);
+      }
+      if (investorSourcesData) {
+        setInvestorSources(investorSourcesData as string[]);
+      }
+      if (rewardsData) {
+        setPendingRewards(rewardsData as bigint);
+      }
+    }
+  }, [activeTab, address, activeSourcesData, investorSourcesData, rewardsData]);
+
+  // Update source details fetching
+  const { data: sourceDetailsData } = useReadContract({
+    ...sourcesConfig,
+    functionName: "getSourceDetails",
+    args: [selectedSource],
+    query: {
+      enabled: !!selectedSource,
+    },
+  });
+
+  useEffect(() => {
+    if (sourceDetailsData) {
+      setSourceDetails(sourceDetailsData);
+    }
+  }, [sourceDetailsData]);
+
+  // Update handleAddSource
+  const handleAddSource = async () => {
+    if (!address || !isConnected) {
+      toast({
+        title: "Error",
+        description: "Please connect your wallet first",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!newSourceUrl) {
+      toast({
+        title: "Error",
+        description: "Please enter a source URL",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setIsLoadingAddSource(true);
+      const stakeAmount = await getStakeAmount();
+
+      // Check balance
+      const balance = await getTokenBalance(address);
+      if (balance < stakeAmount) {
+        toast({
+          title: "Error",
+          description: "Insufficient TRUTH tokens for staking",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Check and handle allowance
+      const allowance = await getAllowance(address);
+      if (allowance < stakeAmount) {
+        try {
+          await approveTokens(stakeAmount);
+        } catch (error) {
+          console.error("Error approving tokens:", error);
+          toast({
+            title: "Error",
+            description: "Failed to approve tokens",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
+      // Add source with stake amount
+      await addSource(newSourceUrl, stakeAmount);
+      setNewSourceUrl("");
       toast({
         title: "Success",
         description: "Source added successfully",
         variant: "default",
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error("Error adding source:", error);
+      let errorMessage = "Failed to add source";
+
+      if (error.message.includes("insufficient funds")) {
+        errorMessage = "Insufficient funds for gas";
+      } else if (error.message.includes("user rejected")) {
+        errorMessage = "Transaction was rejected";
+      } else if (error.message.includes("already exists")) {
+        errorMessage = "Source URL already exists";
+      }
+
       toast({
         title: "Error",
-        description: "Failed to add source",
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      setIsLoadingAddSource(false);
     }
   };
 
+  // Add effect to handle successful transaction
+  useEffect(() => {
+    if (isSuccess && pendingHash) {
+      setNewSourceUrl("");
+      toast({
+        title: "Success",
+        description: "Source added successfully",
+        variant: "default",
+      });
+      setPendingHash(undefined);
+      setIsLoading(false);
+    }
+  }, [isSuccess, pendingHash]);
+
   const handleClaimRewards = async () => {
     try {
-      setIsLoading(true);
+      setIsLoadingClaim(true);
       await claimRewards();
       toast({
         title: "Success",
@@ -557,7 +694,7 @@ export default function PolkaNewsDashboard() {
         variant: "destructive",
       });
     } finally {
-      setIsLoading(false);
+      setIsLoadingClaim(false);
     }
   };
 
@@ -638,10 +775,7 @@ export default function PolkaNewsDashboard() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Recent News Submissions</CardTitle>
-                <CardDescription>
-                  Latest news articles submitted for verification
-                </CardDescription>
+                <CardTitle>Latest News</CardTitle>
               </CardHeader>
               <CardContent>
                 {isLoadingNews ? (
@@ -649,90 +783,30 @@ export default function PolkaNewsDashboard() {
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
                   </div>
                 ) : newsError ? (
-                  <div className="text-center text-destructive">
-                    Failed to load news articles. Please try again.
+                  <div className="text-red-500 text-center py-4">
+                    {newsError}
+                  </div>
+                ) : newsArticles.length > 0 ? (
+                  <div className="space-y-4">
+                    {newsArticles.map((article, index) => (
+                      <div key={index} className="border-b pb-4">
+                        <h3 className="font-semibold">{article.title}</h3>
+                        <p className="text-sm text-muted-foreground">
+                          {article.content}
+                        </p>
+                        <div className="flex justify-between items-center mt-2">
+                          <span className="text-xs text-muted-foreground">
+                            By {article.reporter}
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            {article.timestamp}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 ) : (
-                  <>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Title</TableHead>
-                          <TableHead>Content Hash</TableHead>
-                          <TableHead>Reporter</TableHead>
-                          <TableHead>Status</TableHead>
-                          <TableHead>Timestamp</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {newsArticles.map((news, index) => (
-                          <TableRow key={index}>
-                            <TableCell className="font-medium">
-                              <div
-                                className={`${!isSubscribed ? "blur-sm" : ""}`}
-                              >
-                                {news.title}
-                              </div>
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {news.contentHash.slice(0, 10)}...
-                              {news.contentHash.slice(-8)}
-                            </TableCell>
-                            <TableCell className="font-mono text-xs">
-                              {news.reporter.slice(0, 6)}...
-                              {news.reporter.slice(-4)}
-                            </TableCell>
-                            <TableCell>
-                              {news.isVerified ? (
-                                <Badge
-                                  variant="default"
-                                  className="bg-green-100 text-green-800"
-                                >
-                                  <CheckCircle className="mr-1 h-3 w-3" />
-                                  Verified
-                                </Badge>
-                              ) : (
-                                <Badge
-                                  variant="secondary"
-                                  className="bg-yellow-100 text-yellow-800"
-                                >
-                                  <XCircle className="mr-1 h-3 w-3" />
-                                  Pending
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-xs text-muted-foreground">
-                              {news.timestamp}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                    <div className="flex justify-between items-center mt-4">
-                      <Button
-                        variant="outline"
-                        onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                        disabled={page === 1}
-                      >
-                        Previous
-                      </Button>
-                      <span className="text-sm text-muted-foreground">
-                        Page {page}
-                      </span>
-                      <Button
-                        variant="outline"
-                        onClick={() => setPage((prev) => prev + 1)}
-                        disabled={newsArticles.length < ITEMS_PER_PAGE}
-                      >
-                        Next
-                      </Button>
-                    </div>
-                  </>
-                )}
-                {!isSubscribed && (
-                  <div className="mt-4 text-center text-sm text-muted-foreground">
-                    Subscribe to view full article content
-                  </div>
+                  <p className="text-center py-4">No news articles found</p>
                 )}
               </CardContent>
             </Card>
@@ -802,9 +876,11 @@ export default function PolkaNewsDashboard() {
                 <Button
                   onClick={handleRegisterReporter}
                   className="w-full"
-                  disabled={isRegistering || !address}
+                  disabled={isContractPending || !address}
                 >
-                  {isRegistering ? "Registering..." : "Register as Reporter"}
+                  {isContractPending
+                    ? "Registering..."
+                    : "Register as Reporter"}
                 </Button>
               </CardContent>
             </Card>
@@ -911,11 +987,14 @@ export default function PolkaNewsDashboard() {
                       Your Sources: {investorSources.length}
                     </h3>
                     <p className="text-sm text-muted-foreground">
-                      Pending Rewards: {pendingRewards} TRUTH
+                      Pending Rewards: {formatEther(pendingRewards)} TRUTH
                     </p>
                   </div>
-                  <Button onClick={handleClaimRewards} disabled={isLoading}>
-                    {isLoading ? "Claiming..." : "Claim Rewards"}
+                  <Button
+                    onClick={handleClaimRewards}
+                    disabled={isLoadingClaim}
+                  >
+                    {isLoadingClaim ? "Claiming..." : "Claim Rewards"}
                   </Button>
                 </div>
 
@@ -923,12 +1002,19 @@ export default function PolkaNewsDashboard() {
                   <h3 className="text-lg font-medium mb-4">Add New Source</h3>
                   <div className="flex gap-4">
                     <Input
-                      value={newSourceName}
-                      onChange={(e) => setNewSourceName(e.target.value)}
-                      placeholder="Enter source name"
+                      value={newSourceUrl}
+                      onChange={(e) => setNewSourceUrl(e.target.value)}
+                      placeholder="Enter source URL"
                     />
-                    <Button onClick={handleAddSource} disabled={isLoading}>
-                      {isLoading ? "Adding..." : "Add Source"}
+                    <Button
+                      onClick={handleAddSource}
+                      disabled={
+                        isLoadingAddSource || isContractPending || isConfirming
+                      }
+                    >
+                      {isLoadingAddSource || isContractPending || isConfirming
+                        ? "Adding..."
+                        : "Add Source"}
                     </Button>
                   </div>
                 </div>
@@ -1013,15 +1099,11 @@ export default function PolkaNewsDashboard() {
                     </div>
                     <div>
                       <Label>Stake Amount</Label>
-                      <p>
-                        {ethers.formatEther(sourceDetails.stakeAmount)} TRUTH
-                      </p>
+                      <p>{formatEther(sourceDetails.stakeAmount)} TRUTH</p>
                     </div>
                     <div>
                       <Label>Total Rewards</Label>
-                      <p>
-                        {ethers.formatEther(sourceDetails.totalRewards)} TRUTH
-                      </p>
+                      <p>{formatEther(sourceDetails.totalRewards)} TRUTH</p>
                     </div>
                   </div>
                 </CardContent>

@@ -33,6 +33,15 @@ module.exports = {
       url: "https://testnet-passet-hub-eth-rpc.polkadot.io",
       accounts: [process.env.PRIVATE_KEY],
     },
+    assetHubWestend: {
+      polkavm: true,
+
+      url: "https://westend-asset-hub-rpc.polkadot.io",
+      accounts: [process.env.PRIVATE_KEY],
+      chainId: 1000,
+      gasPrice: 1000000000, // 1 gwei
+      gasMultiplier: 1.2,
+    },
   },
   paths: {
     sources: "./contracts",
