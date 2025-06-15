@@ -5,7 +5,7 @@ require("dotenv").config();
 const SubscriptionManagerABI = require("../../frontend/lib/abi/SubscriptionManagerABI.json");
 
 // Contract addresses
-const SUBSCRIPTION_ADDRESS = "0x2d45Ed0d527f957291B13F83dF4FF439931D8599";
+const SUBSCRIPTION_ADDRESS = "0x55220c208f27aD09cc779201f158300c57866595";
 
 // RPC URL
 const RPC_URL = "https://rpc.api.moonbase.moonbeam.network";

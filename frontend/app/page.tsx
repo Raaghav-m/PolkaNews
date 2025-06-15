@@ -22,15 +22,14 @@ import {
 } from "@/components/ui/table";
 import {
   CheckCircle,
-  XCircle,
-  Wallet,
   Coins,
   FileText,
   Shield,
   Users,
   Home,
   CreditCard,
-  Calendar,
+  Lock,
+  ChevronRight,
 } from "lucide-react";
 import {
   Sidebar,
@@ -44,7 +43,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/ui/sidebar";
 import Link from "next/link";
 import {
@@ -53,19 +51,9 @@ import {
   useDisconnect,
   useWriteContract,
   useWaitForTransactionReceipt,
-  useReadContract,
-  useWatchContractEvent,
-  getContractEvents,
   usePublicClient,
-  useContractRead,
-  useContractWrite,
-  useWaitForTransaction,
 } from "wagmi";
-import { metaMask } from "wagmi/connectors";
-import { WalletConnect } from "@/components/WalletConnect";
-import { Header } from "@/components/Header";
 import PolkaNewsABI from "@/lib/abi/PolkaNewsABI.json";
-import SubscriptionManagerABI from "../lib/abi/SubscriptionManagerABI.json";
 import { useToast } from "@/components/ui/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 import {
@@ -76,27 +64,40 @@ import {
   getAllowance,
   getTokenBalance,
   type SubscriptionDetails,
+  isSubscribed,
 } from "@/lib/subscription";
 import { ConnectButton } from "@/components/ui/connect-button";
 import { ipfsService } from "@/lib/ipfs";
-import { submitNews } from "@/lib/contracts";
-import { config } from "@/lib/wagmi-config";
 import { formatEther } from "viem";
 import {
   getSourceDetails,
-  getActiveSources,
-  getInvestorSources,
   getInvestorRewards,
   getStakeAmount,
   addSource,
   challengeSource,
   claimRewards,
-  distributeRewards,
   approveTokens,
   getSourceRewards,
 } from "@/lib/sources";
 import SourcesABI from "@/lib/abi/SourcesABI.json";
 import TruthTokenABI from "@/lib/abi/TruthTokenABI.json";
+import { useNewsArticles, useIsReporter } from "@/lib/contracts";
+import {
+  useActiveSources,
+  useInvestorSources,
+  useInvestorRewards,
+  useSourceDetails,
+  useSourceRewards,
+  useStakeAmount,
+} from "@/lib/sources";
+import {
+  useSubscriptionDetails,
+  useSubscriptionFee,
+  useTokenBalance,
+  useTokenAllowance,
+} from "@/lib/subscription";
+import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
 
 const sidebarItems = [
   { title: "Home", icon: Home, id: "home" },
@@ -164,20 +165,6 @@ export const sourcesConfig = {
   abi: SourcesABI,
 } as const;
 
-// Helper functions for contract interactions
-const useContractRead = (config: any) => {
-  const { data, isError, isLoading } = useReadContract(config);
-  return { data, isError, isLoading };
-};
-
-interface IPFSContent {
-  id?: string;
-  name: string;
-  content: string;
-  reporter: string;
-  timestamp: string;
-}
-
 interface NewsArticle {
   requestId: number;
   contentHash: string;
@@ -189,9 +176,10 @@ interface NewsArticle {
 }
 
 interface SubscriptionDetails {
-  isSubscribed: boolean;
-  expiryDate: string;
-  subscriptionType: string;
+  data?: [bigint, bigint, boolean];
+  startTime?: bigint;
+  endTime?: bigint;
+  isActive?: boolean;
 }
 
 export default function PolkaNewsDashboard() {
@@ -200,9 +188,6 @@ export default function PolkaNewsDashboard() {
   const [activeTab, setActiveTab] = useState("home");
   const { connect, connectors } = useConnect();
   const { disconnect } = useDisconnect();
-  const [isOwner, setIsOwner] = useState(true);
-  const [isRegisteredReporter, setIsRegisteredReporter] = useState(true);
-  const [truthTokenBalance, setTruthTokenBalance] = useState(1250.75);
   const [newsArticles, setNewsArticles] = useState<NewsArticle[]>([]);
   const [newsTitle, setNewsTitle] = useState("");
   const [newsContent, setNewsContent] = useState("");
@@ -211,11 +196,20 @@ export default function PolkaNewsDashboard() {
   const [isLoadingClaim, setIsLoadingClaim] = useState(false);
   const [isLoadingAddSource, setIsLoadingAddSource] = useState(false);
   const [newsError, setNewsError] = useState<string | null>(null);
-  const [isSubscribing, setIsSubscribing] = useState(false);
   const [subscriptionDetails, setSubscriptionDetails] =
     useState<SubscriptionDetails | null>(null);
   const [subscriptionFee, setSubscriptionFee] = useState<bigint | null>(null);
   const [tokenBalance, setTokenBalance] = useState<bigint | null>(null);
+  const [newSourceUrl, setNewSourceUrl] = useState("");
+  const [activeSources, setActiveSources] = useState<string[]>([]);
+  const [investorSources, setInvestorSources] = useState<string[]>([]);
+  const [selectedSource, setSelectedSource] = useState<string | null>(null);
+  const [sourceDetails, setSourceDetails] = useState<any>(null);
+  const [pendingRewards, setPendingRewards] = useState<bigint>(0n);
+  const [sourceRewards, setSourceRewards] = useState<Record<string, bigint>>(
+    {}
+  );
+  const [sourcesDetails, setSourcesDetails] = useState<Record<string, any>>({});
 
   // Contract write hook
   const { writeContract, isPending: isContractPending } = useWriteContract();
@@ -224,42 +218,20 @@ export default function PolkaNewsDashboard() {
     hash: pendingHash,
   });
 
-  // Contract read hooks
-  const { data: subscriptionFeeData } = useReadContract({
-    address: process.env
-      .NEXT_PUBLIC_SUBSCRIPTION_MANAGER_ADDRESS as `0x${string}`,
-    abi: SubscriptionManagerABI,
-    functionName: "subscriptionFee",
-  });
-
-  const { data: stakeAmountData } = useReadContract({
-    address: process.env.NEXT_PUBLIC_SOURCES_ADDRESS as `0x${string}`,
-    abi: SourcesABI,
-    functionName: "STAKE_AMOUNT",
-  });
-
-  const { data: tokenBalanceData } = useReadContract({
-    address: process.env.NEXT_PUBLIC_TRUTH_TOKEN_ADDRESS as `0x${string}`,
-    abi: TruthTokenABI,
-    functionName: "balanceOf",
-    args: [address],
-    query: {
-      enabled: !!address,
-    },
-  });
+  // Use the new hooks
+  const { data: newsData } = useNewsArticles();
+  const { data: isReporterData } = useIsReporter(address);
+  const { data: activeSourcesData } = useActiveSources();
+  const { data: investorSourcesData } = useInvestorSources(address);
+  const { data: rewardsData } = useInvestorRewards(address);
+  const { data: sourceDetailsData } = useSourceDetails(selectedSource);
+  const { data: sourceRewardsData } = useSourceRewards(selectedSource);
+  const { data: subscriptionDetailsData } = useSubscriptionDetails(address);
+  const { data: subscriptionFeeData } = useSubscriptionFee();
+  const { data: tokenBalanceData } = useTokenBalance(address);
 
   const provider = usePublicClient();
-
-  // Add this hook at the component level
-  const { data: newsData } = useReadContract({
-    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
-    abi: PolkaNewsABI,
-    functionName: "getNewsArticles",
-    args: [0, 10], // Get first 10 articles
-    query: {
-      enabled: !!address,
-    },
-  });
+  const router = useRouter();
 
   // Update useEffect to use the hook data
   useEffect(() => {
@@ -314,7 +286,7 @@ export default function PolkaNewsDashboard() {
             } catch (error) {
               console.error("Error checking verification:", error);
             }
-
+            console.log(isVerified);
             return {
               requestId: Number(article.requestId),
               contentHash: article.contentHash,
@@ -330,7 +302,7 @@ export default function PolkaNewsDashboard() {
           }
         })
       );
-
+      console.log(articles);
       const filteredArticles = articles.filter(
         (article): article is NewsArticle => article !== null
       );
@@ -340,18 +312,44 @@ export default function PolkaNewsDashboard() {
     }
   };
 
-  // Add this hook at the component level
-  const { data: isReporterData } = useReadContract({
-    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
-    abi: PolkaNewsABI,
-    functionName: "isReporter",
-    args: [address],
-    query: {
-      enabled: !!address,
-    },
-  });
+  // Update useEffect to handle token balance
+  useEffect(() => {
+    if (tokenBalanceData !== undefined) {
+      setTokenBalance(tokenBalanceData as bigint);
+    }
+  }, [tokenBalanceData]);
 
-  // Update handleSubmitNews
+  // Update useEffect to handle subscription details
+  useEffect(() => {
+    if (subscriptionDetailsData) {
+      setSubscriptionDetails(subscriptionDetailsData as SubscriptionDetails);
+    }
+  }, [subscriptionDetailsData]);
+
+  // Update useEffect to handle subscription fee
+  useEffect(() => {
+    if (subscriptionFeeData) {
+      setSubscriptionFee(subscriptionFeeData as bigint);
+    }
+  }, [subscriptionFeeData]);
+
+  // Add effect to handle successful transaction
+  useEffect(() => {
+    if (isSuccess && pendingHash) {
+      // Reload subscription details
+      if (address) {
+        getSubscriptionDetails(address).then(setSubscriptionDetails);
+      }
+      toast({
+        title: "Success",
+        description: "Transaction confirmed successfully",
+        variant: "default",
+      });
+      setPendingHash(undefined);
+      setIsLoading(false);
+    }
+  }, [isSuccess, pendingHash, address]);
+
   const handleSubmitNews = async () => {
     if (!address || !newsTitle || !newsContent) {
       toast({
@@ -384,18 +382,12 @@ export default function PolkaNewsDashboard() {
       });
 
       // Submit news
-      const hash = await writeContract({
+      await writeContract({
         address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
         abi: PolkaNewsABI,
         functionName: "submitNews",
         args: [ipfsHash],
       });
-
-      if (hash) {
-        setPendingHash(hash);
-        setNewsTitle("");
-        setNewsContent("");
-      }
     } catch (error: any) {
       console.error("Error submitting news:", error);
       let errorMessage = "Failed to submit news";
@@ -415,30 +407,6 @@ export default function PolkaNewsDashboard() {
       setIsLoading(false);
     }
   };
-
-  // Load subscription details and token balance
-  useEffect(() => {
-    if (address) {
-      const loadDetails = async () => {
-        try {
-          setIsLoading(true);
-          const [details, fee, balance] = await Promise.all([
-            getSubscriptionDetails(address),
-            getSubscriptionFee(),
-            getTokenBalance(address),
-          ]);
-          setSubscriptionDetails(details);
-          setSubscriptionFee(fee);
-          setTokenBalance(balance);
-        } catch (error) {
-          console.error("Error loading details:", error);
-        } finally {
-          setIsLoading(false);
-        }
-      };
-      loadDetails();
-    }
-  }, [address]);
 
   const handlePurchaseSubscription = async () => {
     if (!address) {
@@ -461,30 +429,14 @@ export default function PolkaNewsDashboard() {
         if (allowance < subscriptionFee) {
           console.log("Approving tokens...");
           await approveToken(subscriptionFee);
-          toast({
-            title: "Token Approval Successful",
-            description:
-              "Please confirm the subscription purchase transaction.",
-            variant: "default",
-          });
         }
       }
-
       // Purchase subscription
       await purchaseSubscription();
-      toast({
-        title: "Subscription Successful",
-        description:
-          "Your subscription has been activated. You can now view news articles.",
-        variant: "default",
-      });
-      // Reload subscription details
-      const details = await getSubscriptionDetails(address);
-      setSubscriptionDetails(details);
     } catch (error) {
       console.error("Failed to purchase subscription:", error);
       toast({
-        title: "Subscription Failed",
+        title: "Error",
         description: "Failed to purchase subscription. Please try again.",
         variant: "destructive",
       });
@@ -494,10 +446,30 @@ export default function PolkaNewsDashboard() {
   };
 
   // Add shared function for subscription check
-  const checkSubscriptionStatus = (details: SubscriptionDetails | null) => {
-    if (!details) return false;
-    return details.isActive && Number(details.endTime) * 1000 > Date.now();
+  const checkSubscriptionStatus = async (address: string | undefined) => {
+    if (!address) return false;
+    try {
+      const isSubscribedResult = await isSubscribed(address);
+      console.log("Subscription status check:", {
+        address,
+        isSubscribed: isSubscribedResult,
+      });
+      return isSubscribedResult;
+    } catch (error) {
+      console.error("Error checking subscription status:", error);
+      return false;
+    }
   };
+
+  // Add state for subscription status
+  const [isSubscribedState, setIsSubscribedState] = useState(false);
+
+  // Update useEffect to check subscription status
+  useEffect(() => {
+    if (address) {
+      checkSubscriptionStatus(address).then(setIsSubscribedState);
+    }
+  }, [address]);
 
   const handleRegisterReporter = async () => {
     if (!address) {
@@ -536,51 +508,6 @@ export default function PolkaNewsDashboard() {
     connect({ connector: connectors[0] });
   };
 
-  // Helper functions
-  const checkTokenBalance = async (address: string, amount: bigint) => {
-    const { data: balance } = await useContractRead({
-      address: process.env.NEXT_PUBLIC_TRUTH_TOKEN_ADDRESS as `0x${string}`,
-      abi: TruthTokenABI,
-      functionName: "balanceOf",
-      args: [address],
-    });
-    return (balance as bigint) >= amount;
-  };
-
-  const [newSourceUrl, setNewSourceUrl] = useState("");
-  const [activeSources, setActiveSources] = useState<string[]>([]);
-  const [investorSources, setInvestorSources] = useState<string[]>([]);
-  const [selectedSource, setSelectedSource] = useState<string | null>(null);
-  const [sourceDetails, setSourceDetails] = useState<any>(null);
-  const [pendingRewards, setPendingRewards] = useState<bigint>(0n);
-
-  // Add these hooks at the top level of the component
-  const { data: activeSourcesData } = useReadContract({
-    ...sourcesConfig,
-    functionName: "getActiveSources",
-    query: {
-      enabled: activeTab === "investor" && !!address,
-    },
-  });
-
-  const { data: investorSourcesData } = useReadContract({
-    ...sourcesConfig,
-    functionName: "getInvestorSources",
-    args: [address],
-    query: {
-      enabled: activeTab === "investor" && !!address,
-    },
-  });
-
-  const { data: rewardsData } = useReadContract({
-    ...sourcesConfig,
-    functionName: "getInvestorRewards",
-    args: [address],
-    query: {
-      enabled: activeTab === "investor" && !!address,
-    },
-  });
-
   // Update the useEffect to use the hook data
   useEffect(() => {
     if (activeTab === "investor" && address) {
@@ -597,32 +524,12 @@ export default function PolkaNewsDashboard() {
   }, [activeTab, address, activeSourcesData, investorSourcesData, rewardsData]);
 
   // Update source details fetching
-  const { data: sourceDetailsData } = useReadContract({
-    ...sourcesConfig,
-    functionName: "getSourceDetails",
-    args: [selectedSource],
-    query: {
-      enabled: !!selectedSource,
-    },
-  });
-
   useEffect(() => {
     if (sourceDetailsData) {
       setSourceDetails(sourceDetailsData);
     }
   }, [sourceDetailsData]);
 
-  // Add this hook at the component level
-  const { data: sourceRewardsData } = useReadContract({
-    ...sourcesConfig,
-    functionName: "getSourceTotalRewards",
-    args: [selectedSource],
-    query: {
-      enabled: !!selectedSource,
-    },
-  });
-
-  // Update handleAddSource
   const handleAddSource = async () => {
     if (!address || !isConnected) {
       toast({
@@ -675,12 +582,6 @@ export default function PolkaNewsDashboard() {
 
       // Add source with stake amount
       await addSource(newSourceUrl, stakeAmount);
-      setNewSourceUrl("");
-      toast({
-        title: "Success",
-        description: "Source added successfully",
-        variant: "default",
-      });
     } catch (error: any) {
       console.error("Error adding source:", error);
       let errorMessage = "Failed to add source";
@@ -703,29 +604,10 @@ export default function PolkaNewsDashboard() {
     }
   };
 
-  // Add effect to handle successful transaction
-  useEffect(() => {
-    if (isSuccess && pendingHash) {
-      setNewSourceUrl("");
-      toast({
-        title: "Success",
-        description: "Source added successfully",
-        variant: "default",
-      });
-      setPendingHash(undefined);
-      setIsLoading(false);
-    }
-  }, [isSuccess, pendingHash]);
-
   const handleClaimRewards = async () => {
     try {
       setIsLoadingClaim(true);
       await claimRewards();
-      toast({
-        title: "Success",
-        description: "Rewards claimed successfully",
-        variant: "default",
-      });
     } catch (error) {
       toast({
         title: "Error",
@@ -741,11 +623,6 @@ export default function PolkaNewsDashboard() {
     try {
       setIsLoading(true);
       await challengeSource(sourceName);
-      toast({
-        title: "Success",
-        description: "Source challenged successfully",
-        variant: "default",
-      });
     } catch (error) {
       toast({
         title: "Error",
@@ -763,11 +640,6 @@ export default function PolkaNewsDashboard() {
     return date.toLocaleString();
   };
 
-  // Add state for source rewards
-  const [sourceRewards, setSourceRewards] = useState<Record<string, bigint>>(
-    {}
-  );
-
   // Add effect to fetch rewards for all sources
   useEffect(() => {
     const fetchSourceRewards = async () => {
@@ -776,9 +648,7 @@ export default function PolkaNewsDashboard() {
       const rewards: Record<string, bigint> = {};
       for (const source of activeSources) {
         try {
-          const reward = (await sourceRewardsData)
-            ? (sourceRewardsData as bigint)
-            : await getInvestorRewards(source);
+          const reward = await getSourceRewards(source);
           rewards[source] = reward;
         } catch (error) {
           console.error(`Error fetching rewards for source ${source}:`, error);
@@ -788,10 +658,7 @@ export default function PolkaNewsDashboard() {
     };
 
     fetchSourceRewards();
-  }, [activeSources, sourceRewardsData]);
-
-  // Add state for source details
-  const [sourcesDetails, setSourcesDetails] = useState<Record<string, any>>({});
+  }, [activeSources]);
 
   // Add effect to fetch details and rewards for all sources
   useEffect(() => {
@@ -821,18 +688,14 @@ export default function PolkaNewsDashboard() {
     fetchSourceDetails();
   }, [activeSources]);
 
-  // Update useEffect to handle token balance
-  useEffect(() => {
-    if (tokenBalanceData !== undefined) {
-      setTokenBalance(tokenBalanceData as bigint);
-    }
-  }, [tokenBalanceData]);
+  const handleNewsClick = (article: NewsArticle) => {
+    router.push(`/news/${article.contentHash}`);
+  };
 
   const renderContent = () => {
     // Move declarations outside switch
-    const isSubscribed = checkSubscriptionStatus(subscriptionDetails);
-    const endTime = subscriptionDetails?.endTime
-      ? new Date(Number(subscriptionDetails.endTime) * 1000).toLocaleString()
+    const endTime = subscriptionDetails?.data?.[1]
+      ? new Date(Number(subscriptionDetails.data[1]) * 1000).toLocaleString()
       : "N/A";
     const hasEnoughTokens =
       tokenBalance && subscriptionFee ? tokenBalance >= subscriptionFee : false;
@@ -886,6 +749,11 @@ export default function PolkaNewsDashboard() {
             <Card>
               <CardHeader>
                 <CardTitle>Latest News</CardTitle>
+                {!isSubscribedState && (
+                  <CardDescription className="text-destructive">
+                    Subscribe to unlock full access to news articles
+                  </CardDescription>
+                )}
               </CardHeader>
               <CardContent>
                 {isLoadingNews ? (
@@ -898,19 +766,51 @@ export default function PolkaNewsDashboard() {
                   </div>
                 ) : newsArticles.length > 0 ? (
                   <div className="space-y-4">
+                    {!isSubscribedState && (
+                      <div className="flex items-center justify-center p-4 mb-4 bg-muted rounded-lg">
+                        <div className="text-center">
+                          <Lock className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
+                          <p className="text-sm font-medium">
+                            Subscribe to read full articles
+                          </p>
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="mt-2"
+                            onClick={() => setActiveTab("subscription")}
+                          >
+                            Subscribe Now
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     {newsArticles.map((article, index) => (
                       <div
                         key={index}
-                        className="border-b pb-4 mb-4 last:border-b-0 last:mb-0"
+                        className={cn(
+                          "border-b pb-4 mb-4 last:border-b-0 last:mb-0 cursor-pointer hover:bg-muted/50 transition-colors rounded-lg p-4",
+                          !isSubscribedState && "relative"
+                        )}
+                        onClick={() => handleNewsClick(article)}
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex-1">
-                            <h3 className="text-lg font-semibold mb-2">
+                            <h3
+                              className={cn(
+                                "text-lg font-semibold mb-2",
+                                !isSubscribedState && "blur-sm"
+                              )}
+                            >
                               {article.title}
                             </h3>
-                            <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+                            <div
+                              className={cn(
+                                "text-sm text-muted-foreground mb-2 line-clamp-2",
+                                !isSubscribedState && "blur-sm"
+                              )}
+                            >
                               {article.content}
-                            </p>
+                            </div>
                             <div className="flex items-center gap-2 text-xs text-muted-foreground">
                               <span className="font-mono">
                                 {article.reporter.slice(0, 6)}...
@@ -920,14 +820,20 @@ export default function PolkaNewsDashboard() {
                               <span>{formatTimestamp(article.timestamp)}</span>
                             </div>
                           </div>
-                          <Badge
-                            variant={
-                              article.isVerified ? "default" : "secondary"
-                            }
-                            className="shrink-0"
-                          >
-                            {article.isVerified ? "Verified" : "Pending"}
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Badge
+                              variant={
+                                article.isVerified ? "default" : "secondary"
+                              }
+                              className={cn(
+                                "shrink-0",
+                                !isSubscribedState && "blur-sm"
+                              )}
+                            >
+                              {article.isVerified ? "Verified" : "Pending"}
+                            </Badge>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -1036,6 +942,29 @@ export default function PolkaNewsDashboard() {
           );
         }
 
+        // Log subscription details when tab is active
+        console.log("Subscription Tab - Full Details:", {
+          rawData: subscriptionDetails,
+          parsedData: subscriptionDetails.data
+            ? {
+                startTime: new Date(
+                  Number(subscriptionDetails.data[0]) * 1000
+                ).toLocaleString(),
+                endTime: new Date(
+                  Number(subscriptionDetails.data[1]) * 1000
+                ).toLocaleString(),
+                isActive: subscriptionDetails.data[2],
+                currentTime: new Date().toLocaleString(),
+                timeRemaining:
+                  Math.floor(
+                    (Number(subscriptionDetails.data[1]) * 1000 - Date.now()) /
+                      (1000 * 60 * 60)
+                  ) + " hours",
+              }
+            : null,
+          isSubscribed: isSubscribedState,
+        });
+
         return (
           <div className="space-y-6">
             <Card>
@@ -1053,16 +982,49 @@ export default function PolkaNewsDashboard() {
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium">Status:</span>
-                        <Badge variant={isSubscribed ? "default" : "secondary"}>
-                          {isSubscribed ? "Active" : "Inactive"}
+                        <Badge
+                          variant={isSubscribedState ? "default" : "secondary"}
+                        >
+                          {isSubscribedState ? "Active" : "Inactive"}
                         </Badge>
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium">Expires:</span>
-                        <span className="text-sm text-muted-foreground">
-                          {endTime}
-                        </span>
-                      </div>
+                      {subscriptionDetails.data && (
+                        <>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium">
+                              Start Date:
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                              {new Date(
+                                Number(subscriptionDetails.data[0]) * 1000
+                              ).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium">
+                              End Date:
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                              {new Date(
+                                Number(subscriptionDetails.data[1]) * 1000
+                              ).toLocaleString()}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium">
+                              Time Remaining:
+                            </span>
+                            <span className="text-sm text-muted-foreground">
+                              {Math.floor(
+                                (Number(subscriptionDetails.data[1]) * 1000 -
+                                  Date.now()) /
+                                  (1000 * 60 * 60)
+                              )}{" "}
+                              hours
+                            </span>
+                          </div>
+                        </>
+                      )}
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium">
                           Subscription Fee:
@@ -1084,7 +1046,7 @@ export default function PolkaNewsDashboard() {
                         </span>
                       </div>
                     </div>
-                    {!isSubscribed && (
+                    {!isSubscribedState && (
                       <>
                         {!hasEnoughTokens && (
                           <div className="text-sm text-destructive">

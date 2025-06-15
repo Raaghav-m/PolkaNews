@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import PolkaNewsABI from "@/lib/abi/PolkaNewsABI.json";
 import TruthTokenAbi from "./abi/TruthTokenABI.json";
 import { config } from "./wagmi-config";
+import { useReadContract } from "wagmi";
 
 export const polkaNewsABI = PolkaNewsABI;
 
@@ -182,3 +183,25 @@ export async function getNewsCount() {
     throw error;
   }
 }
+
+// Add hooks for news-related contract reads
+export const useNewsArticles = (startIndex: number = 0, count: number = 10) => {
+  return useReadContract({
+    address: POLKANEWS_ADDRESS,
+    abi: PolkaNewsABI,
+    functionName: "getNewsArticles",
+    args: [startIndex, count],
+  });
+};
+
+export const useIsReporter = (address: string | undefined) => {
+  return useReadContract({
+    address: POLKANEWS_ADDRESS,
+    abi: PolkaNewsABI,
+    functionName: "isReporter",
+    args: [address],
+    query: {
+      enabled: !!address,
+    },
+  });
+};

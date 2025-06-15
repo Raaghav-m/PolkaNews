@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import SubscriptionManagerABI from "./abi/SubscriptionManagerABI.json";
 import TruthTokenABI from "./abi/TruthTokenABI.json";
 import { config } from "./wagmi-config";
+import { useReadContract } from "wagmi";
 
 export const SUBSCRIPTION_ADDRESS = process.env
   .NEXT_PUBLIC_SUBSCRIPTION_ADDRESS as `0x${string}`;
@@ -190,3 +191,63 @@ export async function isSubscribed(address: string): Promise<boolean> {
     throw error;
   }
 }
+
+// Add hooks for subscription-related contract reads
+export const useSubscriptionDetails = (address: string | undefined) => {
+  return useReadContract({
+    ...subscriptionConfig,
+    functionName: "getSubscriptionDetails",
+    args: [address],
+    query: {
+      enabled: !!address,
+      refetchInterval: 10000, // Refetch every 10 seconds
+      onSuccess: (data) => {
+        if (!data) {
+          console.log("No subscription data received");
+          return;
+        }
+
+        // The contract returns an array with [startTime, endTime, isActive]
+        const [startTime, endTime, isActive] = data;
+
+        console.log("Subscription details fetched:", {
+          startTime: startTime?.toString(),
+          endTime: endTime?.toString(),
+          isActive: isActive,
+          address,
+          currentTime: Date.now(),
+          endTimeMs: endTime ? Number(endTime) * 1000 : 0,
+        });
+      },
+    },
+  });
+};
+
+export const useSubscriptionFee = () => {
+  return useReadContract({
+    ...subscriptionConfig,
+    functionName: "subscriptionFee",
+  });
+};
+
+export const useTokenBalance = (address: string | undefined) => {
+  return useReadContract({
+    ...truthTokenConfig,
+    functionName: "balanceOf",
+    args: [address],
+    query: {
+      enabled: !!address,
+    },
+  });
+};
+
+export const useTokenAllowance = (owner: string | undefined) => {
+  return useReadContract({
+    ...truthTokenConfig,
+    functionName: "allowance",
+    args: [owner, SUBSCRIPTION_ADDRESS],
+    query: {
+      enabled: !!owner,
+    },
+  });
+};

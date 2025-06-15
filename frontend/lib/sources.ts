@@ -2,6 +2,7 @@ import { readContract, writeContract } from "wagmi/actions";
 import SourcesABI from "./abi/SourcesABI.json";
 import TruthTokenABI from "./abi/TruthTokenABI.json";
 import { config } from "./wagmi-config";
+import { useReadContract } from "wagmi";
 
 // Get address from environment variables
 export const SOURCES_ADDRESS = process.env
@@ -300,3 +301,62 @@ export async function approveTokens(amount: bigint): Promise<void> {
     throw error;
   }
 }
+
+// Add hooks for source-related contract reads
+export const useActiveSources = () => {
+  return useReadContract({
+    ...sourcesConfig,
+    functionName: "getActiveSources",
+  });
+};
+
+export const useInvestorSources = (address: string | undefined) => {
+  return useReadContract({
+    ...sourcesConfig,
+    functionName: "getInvestorSources",
+    args: [address],
+    query: {
+      enabled: !!address,
+    },
+  });
+};
+
+export const useInvestorRewards = (address: string | undefined) => {
+  return useReadContract({
+    ...sourcesConfig,
+    functionName: "getInvestorRewards",
+    args: [address],
+    query: {
+      enabled: !!address,
+    },
+  });
+};
+
+export const useSourceDetails = (sourceName: string | undefined) => {
+  return useReadContract({
+    ...sourcesConfig,
+    functionName: "getSourceDetails",
+    args: [sourceName],
+    query: {
+      enabled: !!sourceName,
+    },
+  });
+};
+
+export const useSourceRewards = (sourceName: string | undefined) => {
+  return useReadContract({
+    ...sourcesConfig,
+    functionName: "getSourceTotalRewards",
+    args: [sourceName],
+    query: {
+      enabled: !!sourceName,
+    },
+  });
+};
+
+export const useStakeAmount = () => {
+  return useReadContract({
+    ...sourcesConfig,
+    functionName: "STAKE_AMOUNT",
+  });
+};

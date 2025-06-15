@@ -7,11 +7,12 @@ import "./SubscriptionManager.sol";
 import "./TruthToken.sol";
 import "./interface/IEZKLVerifier.sol";
 
-// Minimal verification response structure (from RiskConsumer pattern)
+// Verification response structure with both proof and news verification status
 struct NewsVerificationResponse {
     uint256 requestId;
     string contentHash;
-    bool isVerified;
+    bool isProofVerified;    // Whether the ZK proof is valid
+    bool binaryDecision;     // Whether the news content is verified as true
     bytes proof;
     uint256[] pubInputs;
 }
@@ -97,18 +98,24 @@ contract PolkaNews is Ownable {
         // Store verification response
         verificationResponses[response.requestId] = response;
         
-        // Mint tokens to reporter if news is verified
-        if (response.isVerified) {
+        // Mint tokens to reporter if both proof and news are verified
+        if (response.isProofVerified && response.binaryDecision) {
             address reporter = newsByRequestId[response.requestId].reporter;
             truthToken.mintReward(reporter);
         }
 
-        emit NewsVerified(response.requestId, response.contentHash, response.isVerified);
+        emit NewsVerified(response.requestId, response.contentHash, response.binaryDecision);
     }
 
-    // Check if news is verified
-    function isNewsVerified(uint256 requestId) public view returns (bool) {
-        return verificationResponses[requestId].requestId != 0 && verificationResponses[requestId].isVerified;
+    // Check if news is verified (both proof and content)
+    function binaryDecision(uint256 requestId) public view returns (bool) {
+        NewsVerificationResponse memory response = verificationResponses[requestId];
+        return response.requestId != 0 && response.binaryDecision;
+    }
+
+    function isProofVerified(uint256 requestId) public view returns (bool) {
+        NewsVerificationResponse memory response = verificationResponses[requestId];
+        return response.requestId != 0 && response.isProofVerified;
     }
 
     // Check if news has verification response
@@ -137,7 +144,7 @@ contract PolkaNews is Ownable {
             news.contentHash,
             news.reporter,
             news.timestamp,
-            isNewsVerified(requestId),
+            binaryDecision(requestId),
             hasVerificationResponse(requestId)
         );
     }
