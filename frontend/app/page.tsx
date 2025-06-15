@@ -428,6 +428,25 @@ export default function PolkaNewsDashboard() {
   const provider = usePublicClient();
   const router = useRouter();
 
+  // Update useEffect to fetch active sources on mount
+  useEffect(() => {
+    if (activeSourcesData) {
+      setActiveSources(activeSourcesData as string[]);
+    }
+  }, [activeSourcesData]);
+
+  // Update useEffect for investor tab specific data
+  useEffect(() => {
+    if (activeTab === "investor" && address) {
+      if (investorSourcesData) {
+        setInvestorSources(investorSourcesData as string[]);
+      }
+      if (rewardsData) {
+        setPendingRewards(rewardsData as bigint);
+      }
+    }
+  }, [activeTab, address, investorSourcesData, rewardsData]);
+
   // Update useEffect to use the hook data
   useEffect(() => {
     const loadNews = async () => {
@@ -714,21 +733,6 @@ export default function PolkaNewsDashboard() {
   const handleConnect = () => {
     connect({ connector: connectors[0] });
   };
-
-  // Update the useEffect to use the hook data
-  useEffect(() => {
-    if (activeTab === "investor" && address) {
-      if (activeSourcesData) {
-        setActiveSources(activeSourcesData as string[]);
-      }
-      if (investorSourcesData) {
-        setInvestorSources(investorSourcesData as string[]);
-      }
-      if (rewardsData) {
-        setPendingRewards(rewardsData as bigint);
-      }
-    }
-  }, [activeTab, address, activeSourcesData, investorSourcesData, rewardsData]);
 
   // Update source details fetching
   useEffect(() => {

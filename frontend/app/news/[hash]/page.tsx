@@ -18,12 +18,13 @@ import {
   Eye,
   Share2,
   Loader2,
+  Newspaper,
+  ExternalLink,
 } from "lucide-react";
-import { ipfsService } from "@/lib/ipfs";
 import { useAccount } from "wagmi";
 import { useToast } from "@/components/ui/use-toast";
 import { Toaster } from "@/components/ui/toaster";
-import { useNewsArticles } from "@/lib/contracts";
+import { getNewsDetails } from "@/lib/contracts";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -368,35 +369,18 @@ export default function NewsDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [readingTime, setReadingTime] = useState(0);
   const [isVerifying, setIsVerifying] = useState(false);
-  const { data: newsData } = useNewsArticles();
 
   useEffect(() => {
     const loadArticle = async () => {
       try {
-        console.log(newsData);
         setIsLoading(true);
-        if (!newsData) return;
-
-        const foundArticle = (newsData as NewsArticle[]).find(
-          (a) => a.contentHash === params.hash
-        );
-
-        if (foundArticle) {
-          const ipfsContent = await ipfsService.getContent(
-            foundArticle.contentHash
-          );
-          if (ipfsContent) {
-            const articleData = {
-              ...foundArticle,
-              title: ipfsContent.name,
-              content: ipfsContent.content,
-            };
-            setArticle(articleData);
-
-            // Calculate reading time (average 200 words per minute)
-            const wordCount = ipfsContent.content.split(" ").length;
-            setReadingTime(Math.ceil(wordCount / 200));
-          }
+        const articleData = await getNewsDetails(params.hash as string);
+        console.log(articleData);
+        if (articleData) {
+          setArticle(articleData);
+          // Calculate reading time (average 200 words per minute)
+          const wordCount = articleData.content.split(" ").length;
+          setReadingTime(Math.ceil(wordCount / 200));
         }
       } catch (error) {
         console.error("Error loading article:", error);
@@ -411,19 +395,36 @@ export default function NewsDetailPage() {
     };
 
     loadArticle();
-  }, [params.hash, newsData]);
+  }, [params.hash]);
 
   const handleVerify = async () => {
     setIsVerifying(true);
 
-    // Simulate verification process - the animation will run for about 12 seconds
-    setTimeout(() => {
+    try {
+      // Get the latest article data
+      const updatedArticle = await getNewsDetails(params.hash as string);
+      if (updatedArticle) {
+        setArticle(updatedArticle);
+      }
+
+      // Simulate verification process - the animation will run for about 12 seconds
+      setTimeout(() => {
+        setIsVerifying(false);
+        toast({
+          title: "Verification Complete",
+          description:
+            "Zero-knowledge proof verification completed successfully",
+        });
+      }, 12000);
+    } catch (error) {
+      console.error("Error verifying article:", error);
       setIsVerifying(false);
       toast({
-        title: "Verification Complete",
-        description: "Zero-knowledge proof verification completed successfully",
+        title: "Error",
+        description: "Failed to verify article",
+        variant: "destructive",
       });
-    }, 12000);
+    }
   };
 
   const handleShare = async () => {
@@ -476,352 +477,298 @@ export default function NewsDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
-      {/* Verification Animation Overlay */}
-      <AnimatePresence>
-        <VerificationAnimation isVisible={isVerifying} />
-      </AnimatePresence>
-
-      {/* Header */}
-      <motion.header
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="sticky top-0 z-40 bg-white/80 backdrop-blur-xl border-b border-gray-200/50 shadow-sm"
-      >
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <Link href="/">
-              <GradientButton variant="outline" size="sm">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Dashboard
-              </GradientButton>
-            </Link>
-            <div className="flex items-center gap-2">
-              <GradientButton variant="outline" size="sm" onClick={handleShare}>
-                <Share2 className="w-4 h-4 mr-2" />
-                Share
-              </GradientButton>
+    <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-100 py-12">
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Article Header */}
+        <AnimatedCard delay={0.2}>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{
+                    delay: 0.3,
+                    type: "spring",
+                    stiffness: 200,
+                  }}
+                >
+                  <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg">
+                    <Newspaper className="h-5 w-5 text-white" />
+                  </div>
+                </motion.div>
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">
+                    {article?.title || "Loading..."}
+                  </h1>
+                  <p className="text-sm text-gray-600">
+                    {article?.timestamp
+                      ? new Date(
+                          Number(article.timestamp) * 1000
+                        ).toLocaleString()
+                      : "Loading..."}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <GradientButton
+                  onClick={() => window.history.back()}
+                  variant="outline"
+                  className="text-sm"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back
+                </GradientButton>
+                <GradientButton
+                  onClick={() =>
+                    window.open(
+                      `https://ipfs.io/ipfs/${article?.contentHash}`,
+                      "_blank"
+                    )
+                  }
+                  className="text-sm"
+                >
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  View on IPFS
+                </GradientButton>
+              </div>
             </div>
-          </div>
-        </div>
-      </motion.header>
+          </CardHeader>
+        </AnimatedCard>
 
-      <div className="container mx-auto px-4 py-8">
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.6 }}
-          className="max-w-4xl mx-auto space-y-8"
-        >
-          {/* Article Header */}
-          <AnimatedCard delay={0.1}>
-            <CardHeader className="pb-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1">
-                  <motion.h1
+        {/* Article Content */}
+        <AnimatedCard delay={0.4}>
+          <CardContent className="pt-6">
+            <div className="prose prose-lg max-w-none">
+              {!article ? (
+                <div className="animate-pulse space-y-4">
+                  <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                  <div className="h-4 bg-gray-200 rounded"></div>
+                  <div className="h-4 bg-gray-200 rounded w-5/6"></div>
+                </div>
+              ) : !article.content ? (
+                <div className="text-gray-500 italic">No content available</div>
+              ) : (
+                article.content.split("\n").map((paragraph, index) => (
+                  <motion.p
+                    key={index}
                     initial={{ opacity: 0, y: 20 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2 }}
-                    className="text-3xl md:text-4xl font-bold text-gray-900 leading-tight mb-4"
+                    transition={{
+                      delay: 0.5 + index * 0.1,
+                      duration: 0.5,
+                    }}
+                    className="mb-4 text-gray-700"
                   >
-                    {article.title}
-                  </motion.h1>
+                    {paragraph}
+                  </motion.p>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </AnimatedCard>
 
-                  {/* Article Meta */}
+        {/* Verification Section */}
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.6 }}
+        >
+          <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
+            <Shield className="w-6 h-6 text-blue-600" />
+            Verification Details
+          </h2>
+
+          <div className="grid gap-6 md:grid-cols-2">
+            {/* Zero-Knowledge Proof Card */}
+            <AnimatedCard delay={0.7}>
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                  <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg">
+                    <Shield className="h-5 w-5 text-white" />
+                  </div>
+                  Zero-Knowledge Proof
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center gap-3">
                   <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.3 }}
-                    className="flex flex-wrap items-center gap-4 text-sm text-gray-600"
-                  >
-                    <div className="flex items-center gap-2">
-                      <User className="h-4 w-4" />
-                      <span className="font-mono bg-gray-100 px-2 py-1 rounded text-xs">
-                        {article.reporter.slice(0, 6)}...
-                        {article.reporter.slice(-4)}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Calendar className="h-4 w-4" />
-                      <span>
-                        {new Date(
-                          Number(article.timestamp) * 1000
-                        ).toLocaleDateString("en-US", {
-                          year: "numeric",
-                          month: "long",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Eye className="h-4 w-4" />
-                      <span>{readingTime} min read</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Hash className="h-4 w-4" />
-                      <span className="font-mono text-xs">
-                        {article.contentHash.slice(0, 8)}...
-                      </span>
-                    </div>
-                  </motion.div>
-                </div>
-
-                {/* Status Badges */}
-                <motion.div
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.4 }}
-                  className="flex flex-col gap-2"
-                >
-                  <AnimatedBadge
-                    variant={article.isProofVerified ? "success" : "secondary"}
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{
+                      delay: 0.8,
+                      type: "spring",
+                      stiffness: 200,
+                    }}
                   >
                     {article.isProofVerified ? (
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                      <div className="p-2 bg-gradient-to-br from-emerald-500 to-green-600 rounded-full">
+                        <CheckCircle2 className="h-5 w-5 text-white" />
+                      </div>
                     ) : (
-                      <Clock className="w-3 h-3 mr-1" />
+                      <div className="p-2 bg-gradient-to-br from-gray-400 to-gray-500 rounded-full">
+                        <XCircle className="h-5 w-5 text-white" />
+                      </div>
                     )}
-                    {article.isProofVerified
-                      ? "Proof Verified"
-                      : "Proof Pending"}
-                  </AnimatedBadge>
-                  <AnimatedBadge
-                    variant={article.binaryDecision ? "success" : "destructive"}
+                  </motion.div>
+                  <div>
+                    <p className="font-medium text-gray-900">
+                      {article.isProofVerified
+                        ? "Proof Verified"
+                        : "Verification Pending"}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      {article.isProofVerified
+                        ? "Zero-knowledge proof has been successfully verified"
+                        : "Waiting for zero-knowledge proof verification"}
+                    </p>
+                  </div>
+                </div>
+                <GradientButton
+                  onClick={handleVerify}
+                  className="w-full"
+                  disabled={isVerifying || article.isProofVerified}
+                >
+                  {isVerifying ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Verifying...
+                    </>
+                  ) : (
+                    <>
+                      <Shield className="w-4 h-4 mr-2" />
+                      {article.isProofVerified
+                        ? "Already Verified"
+                        : "Verify Proof"}
+                    </>
+                  )}
+                </GradientButton>
+              </CardContent>
+            </AnimatedCard>
+
+            {/* Content Verification Card */}
+            <AnimatedCard delay={0.8}>
+              <CardHeader>
+                <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                  <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg">
+                    <FileText className="h-5 w-5 text-white" />
+                  </div>
+                  Content Verification
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{
+                      delay: 0.9,
+                      type: "spring",
+                      stiffness: 200,
+                    }}
                   >
                     {article.binaryDecision ? (
-                      <CheckCircle2 className="w-3 h-3 mr-1" />
+                      <div className="p-2 bg-gradient-to-br from-emerald-500 to-green-600 rounded-full">
+                        <CheckCircle2 className="h-5 w-5 text-white" />
+                      </div>
                     ) : (
-                      <XCircle className="w-3 h-3 mr-1" />
+                      <div className="p-2 bg-gradient-to-br from-red-500 to-rose-600 rounded-full">
+                        <XCircle className="h-5 w-5 text-white" />
+                      </div>
                     )}
-                    {article.binaryDecision ? "Verified" : "Unverified"}
-                  </AnimatedBadge>
-                </motion.div>
-              </div>
-            </CardHeader>
-          </AnimatedCard>
-
-          {/* Article Content */}
-          <AnimatedCard delay={0.2}>
-            <CardContent className="p-8">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.5 }}
-                className="prose prose-lg max-w-none"
-              >
-                <div className="text-gray-800 leading-relaxed whitespace-pre-wrap text-lg">
-                  {article.content}
+                  </motion.div>
+                  <div>
+                    <p className="font-medium text-gray-900">
+                      {article.binaryDecision
+                        ? "Content Verified"
+                        : "Verification Failed"}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      {article.binaryDecision
+                        ? "News content has been verified as authentic"
+                        : "Content verification is pending or failed"}
+                    </p>
+                  </div>
                 </div>
-              </motion.div>
-            </CardContent>
-          </AnimatedCard>
 
-          {/* Verification Section */}
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.6 }}
-          >
-            <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2">
-              <Shield className="w-6 h-6 text-blue-600" />
-              Verification Details
-            </h2>
-
-            <div className="grid gap-6 md:grid-cols-2">
-              {/* Proof Verification Card */}
-              <AnimatedCard delay={0.7}>
-                <CardHeader>
-                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                    <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg">
-                      <Shield className="h-5 w-5 text-white" />
-                    </div>
-                    Zero-Knowledge Proof
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-3">
-                    <motion.div
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{
-                        delay: 0.8,
-                        type: "spring",
-                        stiffness: 200,
-                      }}
-                    >
-                      {article.isProofVerified ? (
-                        <div className="p-2 bg-gradient-to-br from-emerald-500 to-green-600 rounded-full">
-                          <CheckCircle2 className="h-5 w-5 text-white" />
-                        </div>
-                      ) : (
-                        <div className="p-2 bg-gradient-to-br from-gray-400 to-gray-500 rounded-full">
-                          <XCircle className="h-5 w-5 text-white" />
-                        </div>
-                      )}
-                    </motion.div>
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        {article.isProofVerified
-                          ? "Proof Verified"
-                          : "Verification Pending"}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {article.isProofVerified
-                          ? "Zero-knowledge proof has been successfully verified"
-                          : "Zero-knowledge proof verification is in progress"}
-                      </p>
-                    </div>
+                {/* Verification Progress */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Verification Progress</span>
+                    <span className="font-medium">
+                      {article.binaryDecision
+                        ? "100%"
+                        : article.isProofVerified
+                          ? "50%"
+                          : "25%"}
+                    </span>
                   </div>
-                  <GradientButton
-                    onClick={handleVerify}
-                    className="w-full"
-                    disabled={isVerifying}
-                  >
-                    {isVerifying ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Verifying...
-                      </>
-                    ) : (
-                      <>
-                        <Shield className="w-4 h-4 mr-2" />
-                        Verify Proof
-                      </>
-                    )}
-                  </GradientButton>
-                </CardContent>
-              </AnimatedCard>
-
-              {/* Content Verification Card */}
-              <AnimatedCard delay={0.8}>
-                <CardHeader>
-                  <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                    <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-600 rounded-lg">
-                      <FileText className="h-5 w-5 text-white" />
-                    </div>
-                    Content Verification
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-3">
+                  <div className="w-full bg-gray-200 rounded-full h-2">
                     <motion.div
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{
-                        delay: 0.9,
-                        type: "spring",
-                        stiffness: 200,
-                      }}
-                    >
-                      {article.binaryDecision ? (
-                        <div className="p-2 bg-gradient-to-br from-emerald-500 to-green-600 rounded-full">
-                          <CheckCircle2 className="h-5 w-5 text-white" />
-                        </div>
-                      ) : (
-                        <div className="p-2 bg-gradient-to-br from-red-500 to-rose-600 rounded-full">
-                          <XCircle className="h-5 w-5 text-white" />
-                        </div>
-                      )}
-                    </motion.div>
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        {article.binaryDecision
-                          ? "Content Verified"
-                          : "Verification Failed"}
-                      </p>
-                      <p className="text-sm text-gray-600">
-                        {article.binaryDecision
-                          ? "News content has been verified as authentic"
-                          : "Content verification is pending or failed"}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Verification Progress */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">
-                        Verification Progress
-                      </span>
-                      <span className="font-medium">
-                        {article.binaryDecision
+                      initial={{ width: 0 }}
+                      animate={{
+                        width: article.binaryDecision
                           ? "100%"
                           : article.isProofVerified
                             ? "50%"
-                            : "25%"}
-                      </span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{
-                          width: article.binaryDecision
-                            ? "100%"
-                            : article.isProofVerified
-                              ? "50%"
-                              : "25%",
-                        }}
-                        transition={{ delay: 1, duration: 1, ease: "easeOut" }}
-                        className={cn(
-                          "h-2 rounded-full",
-                          article.binaryDecision
-                            ? "bg-gradient-to-r from-emerald-500 to-green-600"
-                            : "bg-gradient-to-r from-blue-500 to-purple-600"
-                        )}
-                      />
-                    </div>
+                            : "25%",
+                      }}
+                      transition={{ delay: 1, duration: 1, ease: "easeOut" }}
+                      className={cn(
+                        "h-2 rounded-full",
+                        article.binaryDecision
+                          ? "bg-gradient-to-r from-emerald-500 to-green-600"
+                          : "bg-gradient-to-r from-blue-500 to-purple-600"
+                      )}
+                    />
                   </div>
-                </CardContent>
-              </AnimatedCard>
-            </div>
-          </motion.div>
-
-          {/* Technical Details */}
-          <AnimatedCard delay={0.9}>
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                <Hash className="h-5 w-5 text-gray-600" />
-                Technical Details
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700">
-                    Content Hash
-                  </p>
-                  <p className="text-xs font-mono bg-gray-100 p-2 rounded break-all">
-                    {article.contentHash}
-                  </p>
                 </div>
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700">
-                    Reporter Address
-                  </p>
-                  <p className="text-xs font-mono bg-gray-100 p-2 rounded break-all">
-                    {article.reporter}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700">Timestamp</p>
-                  <p className="text-xs bg-gray-100 p-2 rounded">
-                    {new Date(Number(article.timestamp) * 1000).toISOString()}
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <p className="text-sm font-medium text-gray-700">
-                    Word Count
-                  </p>
-                  <p className="text-xs bg-gray-100 p-2 rounded">
-                    {article.content.split(" ").length} words
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </AnimatedCard>
+              </CardContent>
+            </AnimatedCard>
+          </div>
         </motion.div>
+
+        {/* Technical Details */}
+        <AnimatedCard delay={0.9}>
+          <CardHeader>
+            <CardTitle className="text-lg font-semibold flex items-center gap-2">
+              <Hash className="h-5 w-5 text-gray-600" />
+              Technical Details
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">
+                  Content Hash
+                </p>
+                <p className="text-xs font-mono bg-gray-100 p-2 rounded break-all">
+                  {article.contentHash}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">
+                  Reporter Address
+                </p>
+                <p className="text-xs font-mono bg-gray-100 p-2 rounded break-all">
+                  {article.reporter}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">Timestamp</p>
+                <p className="text-xs bg-gray-100 p-2 rounded">
+                  {new Date(Number(article.timestamp) * 1000).toISOString()}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-gray-700">Word Count</p>
+                <p className="text-xs bg-gray-100 p-2 rounded">
+                  {article.content.split(" ").length} words
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </AnimatedCard>
       </div>
       <Toaster />
     </div>

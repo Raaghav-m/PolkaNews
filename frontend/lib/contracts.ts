@@ -4,6 +4,8 @@ import PolkaNewsABI from "@/lib/abi/PolkaNewsABI.json";
 import TruthTokenAbi from "./abi/TruthTokenABI.json";
 import { config } from "./wagmi-config";
 import { useReadContract } from "wagmi";
+import { ipfsService } from "@/lib/ipfs";
+import { IPFSContent } from "@/lib/types";
 
 export const polkaNewsABI = PolkaNewsABI;
 
@@ -205,3 +207,72 @@ export const useIsReporter = (address: string | undefined) => {
     },
   });
 };
+
+interface ArticleResponse {
+  reporter: string;
+  timestamp: bigint;
+  isProofVerified: boolean;
+  binaryDecision: boolean;
+  requestId: bigint;
+}
+
+export async function getNewsDetails(contentHash: string): Promise<{
+  title: string;
+  content: string;
+  reporter: string;
+  timestamp: string;
+  isProofVerified: boolean;
+  binaryDecision: boolean;
+  contentHash: string;
+} | null> {
+  try {
+    // First get all news to find the matching hash
+    const allNews = (await readContract(config, {
+      address: POLKANEWS_ADDRESS,
+      abi: PolkaNewsABI,
+      functionName: "getAllNews",
+    })) as { contentHash: string; requestId: bigint }[];
+
+    // Find the news article with matching content hash
+    const matchingNews = allNews.find(
+      (news) => news.contentHash === contentHash
+    );
+    if (!matchingNews) {
+      return null;
+    }
+
+    // Get the article details using requestId
+    const article = (await readContract(config, {
+      address: POLKANEWS_ADDRESS,
+      abi: PolkaNewsABI,
+      functionName: "getNewsByRequestId",
+      args: [matchingNews.requestId],
+    })) as ArticleResponse;
+
+    if (!article) {
+      return null;
+    }
+
+    // Get the content from IPFS
+    const ipfsContent = await ipfsService.getContent(contentHash);
+    if (!ipfsContent) {
+      return null;
+    }
+
+    console.log("Article data:", article);
+    console.log("IPFS content:", ipfsContent);
+
+    return {
+      title: ipfsContent.name || "Untitled",
+      content: ipfsContent.content || "",
+      requestId: article.requestId,
+      timestamp: article.timestamp ? article.timestamp.toString() : "0",
+      isProofVerified: article[5] || false,
+      binaryDecision: article[4] || false,
+      contentHash: contentHash,
+    };
+  } catch (error) {
+    console.error("Error fetching news details:", error);
+    return null;
+  }
+}
