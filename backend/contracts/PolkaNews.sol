@@ -7,28 +7,45 @@ import "./SubscriptionManager.sol";
 import "./TruthToken.sol";
 import "./interface/IEZKLVerifier.sol";
 
+// Minimal verification response structure (from RiskConsumer pattern)
+struct NewsVerificationResponse {
+    uint256 requestId;
+    string contentHash;
+    bool isVerified;
+    bytes proof;
+    uint256[] pubInputs;
+}
+
 contract PolkaNews is Ownable {
     TruthToken public truthToken;
     SubscriptionManager public subscriptionManager;
     address public verifier;
 
+    // Request ID counter (from RiskConsumer)
+    uint256 public nextRequestId;
+
     struct NewsArticle {
+        uint256 requestId;
         string contentHash;
         address reporter;
         uint256 timestamp;
-        bool isVerified;
     }
 
     // Array to store all news articles
     NewsArticle[] public newsArticles;
-    // Mapping to store news articles by content hash
-    mapping(string => NewsArticle) public newsByHash;
+    
+    // Mapping by request ID (primary storage)
+    mapping(uint256 => NewsArticle) public newsByRequestId;
+    
+    // Mapping for verification responses (from RiskConsumer)
+    mapping(uint256 => NewsVerificationResponse) public verificationResponses;
+    
     // Mapping to store reporter status
     mapping(address => bool) public reporters;
 
     // Events
-    event NewsSubmitted(string indexed contentHash, address indexed reporter);
-    event NewsVerified(string indexed contentHash, bool isVerified);
+    event NewsSubmitted(uint256 indexed requestId, string indexed contentHash, address indexed reporter);
+    event NewsVerified(uint256 indexed requestId, string indexed contentHash, bool isVerified);
     event ReporterRegistered(address indexed reporter);
     event ReporterRemoved(address indexed reporter);
     event VerifierUpdated(address indexed newVerifier);
@@ -39,6 +56,7 @@ contract PolkaNews is Ownable {
     ) Ownable(msg.sender) {
         truthToken = TruthToken(_truthToken);
         subscriptionManager = SubscriptionManager(_subscriptionManager);
+        nextRequestId = 1;
     }
 
     // Register as a reporter (anyone can call for themselves)
@@ -49,72 +67,82 @@ contract PolkaNews is Ownable {
         emit ReporterRegistered(msg.sender);
     }
 
-    // Submit news (only registered reporters)
-    function submitNews(string calldata contentHash) external {
+    // Submit news (only registered reporters) - generates request ID
+    function submitNews(string calldata contentHash) external returns (uint256) {
         require(reporters[msg.sender], "Not a registered reporter");
-        require(newsByHash[contentHash].reporter == address(0), "News already submitted");
+        
+        uint256 requestId = nextRequestId++;
 
         NewsArticle memory article = NewsArticle({
+            requestId: requestId,
             contentHash: contentHash,
             reporter: msg.sender,
-            timestamp: block.timestamp,
-            isVerified: false
+            timestamp: block.timestamp
         });
 
         newsArticles.push(article);
-        newsByHash[contentHash] = article;
+        newsByRequestId[requestId] = article;
 
-        emit NewsSubmitted(contentHash, msg.sender);
+        emit NewsSubmitted(requestId, contentHash, msg.sender);
+        return requestId;
     }
 
-    // Verify news (only verifier)
-    function verifyNews(string calldata contentHash, bool isVerified,bytes calldata proof,uint256[] calldata instances) external {
-        require(msg.sender == verifier, "Only verifier can verify");
-        require(newsByHash[contentHash].reporter != address(0), "News not found");
-        require(!newsByHash[contentHash].isVerified, "Already verified");
-
-        IEZKLVerifier iezklVerifier=IEZKLVerifier(verifier);
-        require(iezklVerifier.verifyProof(proof, instances),"Model not verified");
-
-        newsByHash[contentHash].isVerified = isVerified;
+    // Submit verification response (from RiskConsumer pattern)
+    function submitVerificationResponse(
+        NewsVerificationResponse calldata response
+    ) external {
+        require(newsByRequestId[response.requestId].requestId != 0, "Request not found");
+        require(verificationResponses[response.requestId].requestId == 0, "Response already submitted");
+        
+        // Store verification response
+        verificationResponses[response.requestId] = response;
         
         // Mint tokens to reporter if news is verified
-        if (isVerified) {
-            address reporter = newsByHash[contentHash].reporter;
+        if (response.isVerified) {
+            address reporter = newsByRequestId[response.requestId].reporter;
             truthToken.mintReward(reporter);
         }
 
-        emit NewsVerified(contentHash, isVerified);
+        emit NewsVerified(response.requestId, response.contentHash, response.isVerified);
     }
 
-    // View news article
-    function viewNews(string calldata contentHash) external {
-        require(newsByHash[contentHash].reporter != address(0), "News not found");
-        require(newsByHash[contentHash].isVerified, "News not verified");
-        require(subscriptionManager.isSubscribed(msg.sender), "Subscription required");
-
-        // Mint tokens to reporter for view
-        address reporter = newsByHash[contentHash].reporter;
-        truthToken.mintReward(reporter);
+    // Check if news is verified
+    function isNewsVerified(uint256 requestId) public view returns (bool) {
+        return verificationResponses[requestId].requestId != 0 && verificationResponses[requestId].isVerified;
     }
 
-    // Get news article details
-    function getNewsByHash(string calldata contentHash) external view returns (
-        string memory contentHash_,
+    // Check if news has verification response
+    function hasVerificationResponse(uint256 requestId) public view returns (bool) {
+        return verificationResponses[requestId].requestId != 0;
+    }
+
+    // Get verification response (from RiskConsumer)
+    function getVerificationResponse(uint256 requestId) external view returns (NewsVerificationResponse memory) {
+        return verificationResponses[requestId];
+    }
+
+    // Get news article details by request ID
+    function getNewsByRequestId(uint256 requestId) external view returns (
+        uint256 requestId_,
+        string memory contentHash,
         address reporter,
+        uint256 timestamp,
         bool isVerified,
-        uint256 timestamp
+        bool hasResponse
     ) {
-        NewsArticle memory news = newsByHash[contentHash];
+        NewsArticle memory news = newsByRequestId[requestId];
+        require(news.requestId != 0, "Request not found");
         return (
+            news.requestId,
             news.contentHash,
             news.reporter,
-            news.isVerified,
-            news.timestamp
+            news.timestamp,
+            isNewsVerified(requestId),
+            hasVerificationResponse(requestId)
         );
     }
 
-    // Get all news articles
+    // Get all news articles with verification status
     function getAllNews() external view returns (NewsArticle[] memory) {
         return newsArticles;
     }
