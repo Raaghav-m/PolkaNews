@@ -126,10 +126,10 @@ async def setup_minimal_verification_circuit():
         opset_version=11
     )
     
-    # Generate settings - EXACT working pattern
+    # Generate settings - EXACT working pattern from compute_node
     print("⚙️  Generating circuit settings...")
     py_run_args = ezkl.PyRunArgs()
-    py_run_args.input_visibility = "private"
+    py_run_args.input_visibility = "public"   # ✅ PUBLIC - needed for pub_inputs!
     py_run_args.output_visibility = "public"
     py_run_args.param_visibility = "private"
     py_run_args.logrows = 17
@@ -240,13 +240,40 @@ async def verify_claim_with_proof(claim, evidence):
     
     print("🎉 Claim verification with ZK proof completed successfully!")
     
-    # Format result
+    # Debug: Check proof structure
+    print(f"🔍 Debug - Proof type: {type(proof)}")
+    print(f"🔍 Debug - Proof keys: {list(proof.keys()) if isinstance(proof, dict) else 'Not a dict'}")
+    if isinstance(proof, dict) and 'instances' in proof:
+        print(f"🔍 Debug - Instances: {proof['instances']}")
+        print(f"🔍 Debug - Instances length: {len(proof['instances'])}")
+    else:
+        print("🔍 Debug - No instances found in proof!")
+    
+    # Format public inputs - EXACT working pattern from risk_model.py
+    def format_pub_inputs(proof_obj):
+        inputs_arr = []
+        formatted = "["
+        for i, value in enumerate(proof_obj["instances"]):
+            for j, field_element in enumerate(value):
+                big_endian_val = ezkl.felt_to_big_endian(field_element)
+                inputs_arr.append(big_endian_val)
+                formatted += '"' + str(big_endian_val) + '"'
+                if j != len(value) - 1:
+                    formatted += ", "
+            if i != len(proof_obj["instances"]) - 1:
+                formatted += ", "
+        formatted += "]"
+        return formatted  # Return formatted string like working example
+    
+    pub_inputs = format_pub_inputs(proof)
+    print(f"🔍 Debug - Formatted pub_inputs: {pub_inputs}")
+    
+    # Return ONLY the 4 required fields - MATCH working example format
     return {
-        "claim": claim,
-        "evidence": evidence,
+        "proof_verified": True,
         "binary_decision": binary_decision,
-        "proof": proof["proof"] if isinstance(proof, dict) else str(proof),
-        "proof_verified": True
+        "proof": proof["proof"],  # Return hex string (like working example)
+        "pub_inputs": pub_inputs,  # Return formatted string (like working example)
     }
 
 # Public interface function

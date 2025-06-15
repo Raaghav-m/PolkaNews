@@ -59,102 +59,51 @@ class EventListener:
         self.account = self.web3.eth.account.from_key(self.private_key)
         self.logger.info(f"Event listener initialized with account: {self.account.address}")
 
-    async def submit_verification_result(self, request_id: int, content_hash: str, is_verified: bool, proof: bytes, instances: list) -> None:
+    async def submit_verification_result(self, request_id: int, content_hash: str, is_proof_verified: bool, binary_decision: bool, proof: bytes, instances: list) -> None:
         """Submit verification result back to blockchain contract using submitVerificationResponse"""
         try:
             self.logger.info(f"Submitting verification response for request ID {request_id}")
             self.logger.info(f"Content Hash: {content_hash}")
-            self.logger.info(f"Verified: {is_verified}")
+            self.logger.info(f"Is Proof Verified: {is_proof_verified}")
+            self.logger.info(f"Binary Decision: {binary_decision}")
             self.logger.info(f"Raw proof type: {type(proof)}")
             self.logger.info(f"Raw instances type: {type(instances)}")
 
             nonce = self.web3.eth.get_transaction_count(self.account.address)
             gas_price = self.web3.eth.gas_price
             
-            # Format proof - handle both EZKL proof dict and raw bytes
-            formatted_proof = b''
-            formatted_instances = []
-            
-            if isinstance(proof, dict) and 'proof' in proof:
-                # EZKL proof format - extract the actual proof bytes
-                proof_hex = proof['proof']
-                if isinstance(proof_hex, str):
-                    formatted_proof = bytes.fromhex(proof_hex.replace('0x', ''))
-                else:
-                    formatted_proof = proof_hex
-                
-                # Format instances from EZKL proof format - EXACTLY like working example
-                if 'instances' in proof and proof['instances']:
-                    try:
-                        import ezkl
-                        # Create formatted string like working example
-                        inputs_arr = []
-                        formatted_str = "["
-                        for i, value in enumerate(proof["instances"]):
-                            for j, field_element in enumerate(value):
-                                big_endian_val = ezkl.felt_to_big_endian(field_element)
-                                inputs_arr.append(big_endian_val)
-                                formatted_str += '"' + str(big_endian_val) + '"'
-                                if j != len(value) - 1:
-                                    formatted_str += ", "
-                            if i != len(proof["instances"]) - 1:
-                                formatted_str += ", "
-                        formatted_str += "]"
-                        
-                        # Parse back to integers with hex conversion like working example
-                        try:
-                            parsed_inputs = json.loads(formatted_str.replace("'", '"'))
-                            formatted_instances = [int(x, 16) for x in parsed_inputs]
-                            self.logger.info(f"Formatted {len(formatted_instances)} instances from EZKL proof using working example pattern")
-                        except Exception as parse_error:
-                            self.logger.warning(f"Failed to parse formatted instances: {parse_error}, using direct conversion")
-                            formatted_instances = [int(str(val)) for val in inputs_arr]
-                            
-                    except ImportError:
-                        self.logger.warning("EZKL not available for instance formatting, using raw instances")
-                        formatted_instances = instances if instances else [0]
-                else:
-                    formatted_instances = instances if instances else [0]
-                    
-            elif isinstance(proof, str):
-                # String hex proof
+            # Convert proof to bytes if it's a hex string (like working example)
+            if isinstance(proof, str):
                 formatted_proof = bytes.fromhex(proof.replace('0x', ''))
-                # Handle string instances like working example
-                if isinstance(instances, str):
-                    try:
-                        parsed_instances = json.loads(instances.replace("'", '"'))
-                        formatted_instances = [int(x, 16) for x in parsed_instances]
-                    except Exception as e:
-                        self.logger.warning(f"Failed to parse string instances: {e}")
-                        formatted_instances = [0]
-                else:
-                    formatted_instances = instances if instances else [0]
             elif isinstance(proof, bytes):
-                # Raw bytes proof
                 formatted_proof = proof
-                formatted_instances = instances if instances else [0]
             else:
                 self.logger.warning(f"Unknown proof format: {type(proof)}, using dummy proof")
                 formatted_proof = b'\x00' * 32
-                formatted_instances = [0]
             
-            # Ensure we have valid proof and instances
-            if not formatted_proof:
-                formatted_proof = b'\x00' * 32
-                self.logger.warning("Using dummy proof - no actual proof provided")
-            
-            if not formatted_instances:
+            # Handle pub_inputs - convert formatted string to integers like working example
+            if isinstance(instances, str):
+                try:
+                    parsed_instances = json.loads(instances.replace("'", '"'))
+                    formatted_instances = [int(x, 16) for x in parsed_instances]  # HEX TO INT like working example
+                except Exception as e:
+                    self.logger.warning(f"Failed to parse string instances: {e}")
+                    formatted_instances = [0]
+            elif isinstance(instances, list):
+                formatted_instances = instances
+            else:
+                self.logger.warning(f"Unexpected instances type: {type(instances)}, using dummy")
                 formatted_instances = [0]
-                self.logger.warning("Using dummy instances - no actual instances provided")
             
             self.logger.info(f"Formatted proof length: {len(formatted_proof)}")
             self.logger.info(f"Formatted instances: {formatted_instances}")
             
-            # Create NewsVerificationResponse struct
+            # Create NewsVerificationResponse struct - CORRECT ORDER
             verification_response = (
                 request_id,           # uint256 requestId
                 content_hash,         # string contentHash
-                is_verified,          # bool isVerified
+                is_proof_verified,    # bool isProofVerified
+                binary_decision,      # bool binaryDecision
                 formatted_proof,      # bytes proof
                 formatted_instances   # uint256[] pubInputs
             )
@@ -281,7 +230,7 @@ async def process_news_event(event_data, contract, web3_instance):
                 result = await setup_and_verify(
                     claim,
                     evidence,
-                    setup_required=not setup_completed
+                    setup_required=False
                 )
                 
                 if not setup_completed:
@@ -289,17 +238,18 @@ async def process_news_event(event_data, contract, web3_instance):
                     logger.info("✅ Circuit setup completed")
 
                 logger.info(f"✅ ZKML verification complete for {content_hash}")
-                logger.info(f"Verified: {result.get('verified')}")
-                logger.info(f"Verification score: {result.get('verification_score')}")
+                logger.info(f"Binary Decision: {result.get('binary_decision')}")
+                logger.info(f"Proof Verified: {result.get('proof_verified')}")
 
                 # 4. Submit verification result back to blockchain
                 event_listener = EventListener()
                 await event_listener.submit_verification_result(
                     request_id,
                     content_hash,
-                    result.get('verified', False),
+                    result.get('proof_verified', False),  # is_proof_verified
+                    bool(result.get('binary_decision', 0)),  # binary_decision
                     result.get('proof', {}),  # Pass the raw proof dict from EZKL
-                    result.get('instances', [])  # Pass raw instances (will be handled in submit method)
+                    result.get('pub_inputs', [])  # Pass formatted pub_inputs string
                 )
 
             except Exception as e:
@@ -312,9 +262,10 @@ async def process_news_event(event_data, contract, web3_instance):
                     await event_listener.submit_verification_result(
                         request_id,
                         content_hash,
-                        False,  # verification failed
-                        {},     # no proof dict
-                        []      # no instances
+                        False,  # is_proof_verified = False
+                        False,  # binary_decision = False
+                        b'\x00' * 32,  # dummy bytes proof (not empty dict)
+                        [0]      # dummy uint256[] instances (not empty list)
                     )
                 except Exception as submit_error:
                     logger.error(f"❌ Failed to submit error result: {submit_error}")
@@ -453,7 +404,7 @@ async def handle_client(websocket, path):
                         result = await setup_and_verify(
                             claim,
                             evidence,
-                            setup_required=not setup_completed
+                            setup_required=False
                         )
                         
                         if not setup_completed:
@@ -469,7 +420,7 @@ async def handle_client(websocket, path):
                             "result": result
                         }))
                         
-                        logger.info(f"Verification completed: {result['verified']}")
+                        logger.info(f"Verification completed: {bool(result['binary_decision'])}")
                         
                     except Exception as e:
                         error_msg = f"Verification failed: {str(e)}"
