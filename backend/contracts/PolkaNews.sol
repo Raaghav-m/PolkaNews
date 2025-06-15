@@ -7,8 +7,17 @@ import "./SubscriptionManager.sol";
 import "./TruthToken.sol";
 import "./interface/IEZKLVerifier.sol";
 
-// Verification response structure with both proof and news verification status
+// Input verification response structure
 struct NewsVerificationResponse {
+    uint256 requestId;
+    string contentHash;
+    bool binaryDecision;     // Whether the news content is verified as true
+    bytes proof;
+    uint256[] pubInputs;
+}
+
+// Stored verification response structure
+struct StoredVerificationResponse {
     uint256 requestId;
     string contentHash;
     bool isProofVerified;    // Whether the ZK proof is valid
@@ -20,7 +29,7 @@ struct NewsVerificationResponse {
 contract PolkaNews is Ownable {
     TruthToken public truthToken;
     SubscriptionManager public subscriptionManager;
-    address public verifier;
+    IEZKLVerifier public verifier;
 
     // Request ID counter (from RiskConsumer)
     uint256 public nextRequestId;
@@ -38,8 +47,8 @@ contract PolkaNews is Ownable {
     // Mapping by request ID (primary storage)
     mapping(uint256 => NewsArticle) public newsByRequestId;
     
-    // Mapping for verification responses (from RiskConsumer)
-    mapping(uint256 => NewsVerificationResponse) public verificationResponses;
+    // Mapping for verification responses
+    mapping(uint256 => StoredVerificationResponse) public verificationResponses;
     
     // Mapping to store reporter status
     mapping(address => bool) public reporters;
@@ -94,12 +103,25 @@ contract PolkaNews is Ownable {
     ) external {
         require(newsByRequestId[response.requestId].requestId != 0, "Request not found");
         require(verificationResponses[response.requestId].requestId == 0, "Response already submitted");
+        require(address(verifier) != address(0), "Verifier not set");
         
-        // Store verification response
-        verificationResponses[response.requestId] = response;
+        // Verify the proof using the verifier contract
+        bool isProofVerified = verifier.verifyProof(response.proof, response.pubInputs);
+        
+        // Store verification response with proof verification status
+        StoredVerificationResponse memory storedResponse = StoredVerificationResponse({
+            requestId: response.requestId,
+            contentHash: response.contentHash,
+            isProofVerified: isProofVerified,
+            binaryDecision: response.binaryDecision,
+            proof: response.proof,
+            pubInputs: response.pubInputs
+        });
+        
+        verificationResponses[response.requestId] = storedResponse;
         
         // Mint tokens to reporter if both proof and news are verified
-        if (response.isProofVerified && response.binaryDecision) {
+        if (isProofVerified && response.binaryDecision) {
             address reporter = newsByRequestId[response.requestId].reporter;
             truthToken.mintReward(reporter);
         }
@@ -109,22 +131,17 @@ contract PolkaNews is Ownable {
 
     // Check if news is verified (both proof and content)
     function binaryDecision(uint256 requestId) public view returns (bool) {
-        NewsVerificationResponse memory response = verificationResponses[requestId];
+        StoredVerificationResponse memory response = verificationResponses[requestId];
         return response.requestId != 0 && response.binaryDecision;
     }
 
     function isProofVerified(uint256 requestId) public view returns (bool) {
-        NewsVerificationResponse memory response = verificationResponses[requestId];
+        StoredVerificationResponse memory response = verificationResponses[requestId];
         return response.requestId != 0 && response.isProofVerified;
     }
 
-    // Check if news has verification response
-    function hasVerificationResponse(uint256 requestId) public view returns (bool) {
-        return verificationResponses[requestId].requestId != 0;
-    }
-
-    // Get verification response (from RiskConsumer)
-    function getVerificationResponse(uint256 requestId) external view returns (NewsVerificationResponse memory) {
+    // Get verification response
+    function getVerificationResponse(uint256 requestId) external view returns (StoredVerificationResponse memory) {
         return verificationResponses[requestId];
     }
 
@@ -145,7 +162,7 @@ contract PolkaNews is Ownable {
             news.reporter,
             news.timestamp,
             binaryDecision(requestId),
-            hasVerificationResponse(requestId)
+            isProofVerified(requestId)
         );
     }
 
@@ -199,12 +216,12 @@ contract PolkaNews is Ownable {
     // Set verifier address (only owner)
     function setVerifier(address _verifier) external onlyOwner {
         require(_verifier != address(0), "Invalid verifier address");
-        verifier = _verifier;
+        verifier = IEZKLVerifier(_verifier);
         emit VerifierUpdated(_verifier);
     }
 
     // Get verifier address
     function getVerifier() external view returns (address) {
-        return verifier;
+        return address(verifier);
     }
 } 

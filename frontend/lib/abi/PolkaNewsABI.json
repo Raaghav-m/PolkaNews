@@ -17,6 +17,25 @@
   },
   {
     "type": "function",
+    "name": "binaryDecision",
+    "inputs": [
+      {
+        "name": "requestId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getAllNews",
     "inputs": [],
     "outputs": [
@@ -180,7 +199,12 @@
             "internalType": "string"
           },
           {
-            "name": "isVerified",
+            "name": "isProofVerified",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "binaryDecision",
             "type": "bool",
             "internalType": "bool"
           },
@@ -233,7 +257,7 @@
   },
   {
     "type": "function",
-    "name": "isNewsVerified",
+    "name": "isProofVerified",
     "inputs": [
       {
         "name": "requestId",
@@ -474,7 +498,12 @@
             "internalType": "string"
           },
           {
-            "name": "isVerified",
+            "name": "isProofVerified",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "binaryDecision",
             "type": "bool",
             "internalType": "bool"
           },
@@ -555,7 +584,12 @@
         "internalType": "string"
       },
       {
-        "name": "isVerified",
+        "name": "isProofVerified",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "binaryDecision",
         "type": "bool",
         "internalType": "bool"
       },
