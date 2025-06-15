@@ -179,6 +179,7 @@ interface IPFSContent {
 }
 
 interface NewsArticle {
+  requestId: number;
   contentHash: string;
   reporter: string;
   timestamp: string;
@@ -299,8 +300,27 @@ export default function PolkaNewsDashboard() {
             );
             if (!ipfsContent) return null;
 
+            // Check verification status using requestId
+            let isVerified = false;
+            try {
+              const result = await provider?.readContract({
+                address: process.env
+                  .NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+                abi: PolkaNewsABI,
+                functionName: "isNewsVerified",
+                args: [Number(article.requestId)],
+              });
+              isVerified = result as boolean;
+            } catch (error) {
+              console.error("Error checking verification:", error);
+            }
+
             return {
-              ...article,
+              requestId: Number(article.requestId),
+              contentHash: article.contentHash,
+              reporter: article.reporter,
+              timestamp: article.timestamp,
+              isVerified,
               title: ipfsContent.name,
               content: ipfsContent.content,
             };
@@ -1155,7 +1175,10 @@ export default function PolkaNewsDashboard() {
                           <TableCell className="font-medium">{name}</TableCell>
                           <TableCell className="font-mono text-sm">
                             {sourcesDetails[name]?.investor
-                              ? `${sourcesDetails[name].investor.slice(0, 6)}...${sourcesDetails[name].investor.slice(-4)}`
+                              ? `${sourcesDetails[name].investor.slice(
+                                  0,
+                                  6
+                                )}...${sourcesDetails[name].investor.slice(-4)}`
                               : "Loading..."}
                           </TableCell>
                           <TableCell>
