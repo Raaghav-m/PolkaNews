@@ -3,11 +3,9 @@ require("dotenv").config();
 
 // Contract ABIs
 const SubscriptionManagerABI = require("../../frontend/lib/abi/SubscriptionManagerABI.json");
-const TruthTokenABI = require("../../frontend/lib/abi/TruthTokenABI.json");
 
-// Error data from the failed transaction
-const errorData =
-  "0xe450d38c0000000000000000000000005a4be260869a25e6682cb0362233872f10f8736d000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000029a2241af62c0000";
+// The error we're trying to decode
+const errorData = "0x"; // Empty result data from isSubscribed call
 
 async function main() {
   try {
@@ -16,47 +14,59 @@ async function main() {
       "https://rpc.api.moonbase.moonbeam.network"
     );
     const contract = new ethers.Contract(
-      "0x5a4be260869A25E6682cB0362233872F10F8736D",
+      "0xcBE66646C0450d75957F726cF99dAD471916933B",
       SubscriptionManagerABI,
       provider
     );
 
-    // Get the error selector (first 4 bytes)
-    const errorSelector = errorData.slice(0, 10);
-    console.log("Error Selector:", errorSelector);
+    console.log("Attempting to decode error for isSubscribed call...");
+    console.log("Contract Address:", contract.target);
+    console.log("Method: isSubscribed(address)");
+    console.log("Error Data:", errorData);
 
-    // Get the error parameters (remaining bytes)
-    const errorParams = "0x" + errorData.slice(10);
-    console.log("Error Parameters:", errorParams);
+    // Get the interface from the contract
+    const iface = new ethers.Interface(SubscriptionManagerABI);
 
     // Try to decode the error data
     try {
-      // Get the interface from the contract
-      const iface = new ethers.Interface(SubscriptionManagerABI);
-
-      // Try to decode the error data
       const decodedError = iface.parseError(errorData);
       console.log("\nDecoded Error:");
       console.log("Name:", decodedError.name);
       console.log("Args:", decodedError.args);
     } catch (decodeError) {
+      console.log("\nError Analysis:");
+      console.log("1. The error 'could not decode result data' suggests that:");
       console.log(
-        "\nCould not decode error with contract interface. Trying to decode raw data:"
+        "   - The contract at the specified address might not be a SubscriptionManager contract"
       );
+      console.log("   - The contract might not have the isSubscribed function");
+      console.log("   - The contract might be deployed to a different address");
 
-      // Decode the parameters manually
-      const decodedParams = ethers.AbiCoder.defaultAbiCoder().decode(
-        ["address", "uint256", "uint256"],
-        errorParams
-      );
+      // Try to verify the contract
+      console.log("\nVerifying contract...");
+      try {
+        const code = await provider.getCode(contract.target);
+        if (code === "0x") {
+          console.log("No contract found at this address!");
+        } else {
+          console.log("Contract exists at this address");
+          console.log("Contract bytecode length:", code.length);
+        }
+      } catch (error) {
+        console.log("Error checking contract:", error.message);
+      }
 
-      console.log("\nDecoded Parameters:");
-      console.log("Address:", decodedParams[0]);
-      console.log("Value 1:", decodedParams[1].toString());
-      console.log("Value 2:", ethers.formatEther(decodedParams[2]));
+      // Try to get the ABI for the contract
+      console.log("\nChecking contract functions...");
+      try {
+        const functions = Object.keys(contract.interface.functions);
+        console.log("Available functions:", functions);
+      } catch (error) {
+        console.log("Error getting contract functions:", error.message);
+      }
     }
   } catch (error) {
-    console.error("Error decoding:", error);
+    console.error("Error in analysis:", error);
   }
 }
 
