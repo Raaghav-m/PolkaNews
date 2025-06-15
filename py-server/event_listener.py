@@ -11,6 +11,7 @@ from websockets.server import serve
 from websockets import connect
 from websockets.exceptions import ConnectionClosed
 import aiohttp
+import openai
 
 # Use the MINIMAL working model
 from minimal_sentence_model import setup_and_verify
@@ -218,14 +219,130 @@ async def process_news_event(event_data, contract, web3_instance):
                 logger.error(f"❌ {error_msg}", exc_info=True)
                 return
 
-            # 2. Prepare for verification
-            evidence = "this is evidence"
+            # 2. Get active sources from sources contract and use OpenAI to get evidence
+            sources_contract_address = "0xf33eC9b41A6d2B9B52b71B2f67beAc767191fDCD"
+            sources_rpc_url = "https://rpc.api.moonbase.moonbeam.network"
+            
+            # Create Web3 instance for sources contract
+            sources_web3 = Web3(Web3.HTTPProvider(sources_rpc_url))
+            
+            # Simple ABI for getActiveSources function
+            sources_abi = [
+                {
+                    "inputs": [],
+                    "name": "getActiveSources",
+                    "outputs": [{"internalType": "string[]", "name": "", "type": "string[]"}],
+                    "stateMutability": "view",
+                    "type": "function"
+                }
+            ]
+            
+            try:
+                sources_contract = sources_web3.eth.contract(
+                    address=sources_contract_address,
+                    abi=sources_abi
+                )
+                
+                active_sources = sources_contract.functions.getActiveSources().call()
+                logger.info(f"📡 Active sources retrieved: {active_sources}")
+                
+                # Use OpenAI to get evidence from active sources
+                if active_sources and claim:
+                    try:
+                        # Set up OpenAI (you'll need to set OPENAI_API_KEY environment variable)
+                        openai_api_key = os.getenv('OPENAI_API_KEY')
+                        if not openai_api_key:
+                            logger.warning("⚠️ OPENAI_API_KEY not set, using fallback evidence")
+                            evidence = f"Active news sources: {', '.join(active_sources)}"
+                        else:
+                            # Create OpenAI client
+                            client = openai.OpenAI(api_key=openai_api_key)
+                            
+                            # Prepare the input for OpenAI
+                            openai_input = {
+                                "news": claim,
+                                "sources": active_sources
+                            }
+                            
+                            logger.info(f"🤖 Calling OpenAI with news: '{claim[:100]}...' and sources: {active_sources}")
+                            
+                            # Call OpenAI API
+                            response = client.responses.create(
+
+                                model="gpt-4.1",
+
+                                tools=[{ "type": "web_search_preview" }],
+
+                                input= "You are a research assistant. I will give you a news claim and a list of trusted news sources. "
+                                            "Your task is to search for and extract relevant evidence about the claim *only from the provided sources*. "
+                                            "Summarize any supporting or contradicting information found in the articles. Do not have any links in the middle.\n\n"
+                                            # "If no relevant information is found from the listed sources, write: "
+                                            # "\"No relevant information found on the provided sources.\"\n\n"
+                                            "Return your answer strictly in the following JSON format:\n\n"
+                                            "{\n  \"news\": \"<the original news claim>\",\n  \"evidence\": \"<summary of the evidence from the listed sources>\"\n}\n\n"
+                                            f"Here is the input:\n\n{json.dumps(openai_input)}"
+
+                            )
+                            # response = client.chat.completions.create(
+                            #     model="gpt-4o",
+                            #     messages=[
+                            #         {
+                            #             "role": "user",
+                            #             "content": (
+                            #                 "You are a research assistant. I will give you a news claim and a list of trusted news sources. "
+                            #                 "Your task is to search for and extract relevant evidence about the claim *only from the provided sources*. "
+                            #                 "Summarize any supporting or contradicting information found in the articles. Do not have any links in the middle.\n\n"
+                            #                 "If no relevant information is found from the listed sources, write: "
+                            #                 "\"No relevant information found on the provided sources.\"\n\n"
+                            #                 "Return your answer strictly in the following JSON format:\n\n"
+                            #                 "{\n  \"news\": \"<the original news claim>\",\n  \"evidence\": \"<summary of the evidence from the listed sources>\"\n}\n\n"
+                            #                 f"Here is the input:\n\n{json.dumps(openai_input)}"
+                            #             )
+                            #         }
+                            #     ],
+                            #     temperature=1,
+                            #     max_tokens=2048,
+                            #     top_p=1
+                            # )
+                            
+                            # Extract evidence from OpenAI response
+                            openai_response = response.output_text
+                            logger.info(f"🤖 OpenAI response: {openai_response}")
+                            
+                            try:
+                                # Parse JSON response from OpenAI - handle markdown code blocks
+                                openai_response_clean = openai_response.strip()
+                                if openai_response_clean.startswith('```json'):
+                                    # Remove markdown code blocks
+                                    openai_response_clean = openai_response_clean.replace('```json', '').replace('```', '').strip()
+                                
+                                parsed_response = json.loads(openai_response_clean)
+                                evidence = parsed_response.get("evidence", "No evidence found")
+                                logger.info(f"📰 Extracted evidence: '{evidence}'")
+                            except json.JSONDecodeError:
+                                logger.error("❌ Failed to parse OpenAI JSON response")
+                                evidence = openai_response  # Use raw response as fallback
+                                
+                    except Exception as openai_error:
+                        logger.error(f"❌ OpenAI API call failed: {openai_error}")
+                        evidence = f"Active news sources: {', '.join(active_sources)}"  # fallback
+                else:
+                    evidence = "No active sources available"
+                    
+            except Exception as sources_error:
+                logger.error(f"❌ Failed to get active sources: {sources_error}")
+                evidence = "this is evidence"  # fallback to original
+                
+            logger.info(f"📰 Final evidence for verification: '{evidence}...'")
+
+            # 3. Prepare for verification
             if not claim:
                 error_msg = f"Claim content is empty for {content_hash}."
                 logger.error(f"❌ {error_msg}")
                 return
 
             # 3. Call ZKML verification
+            print(claim, evidence)
             try:
                 result = await setup_and_verify(
                     claim,

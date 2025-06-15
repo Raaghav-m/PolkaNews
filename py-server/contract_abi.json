@@ -238,25 +238,6 @@
   },
   {
     "type": "function",
-    "name": "hasVerificationResponse",
-    "inputs": [
-      {
-        "name": "requestId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "isProofVerified",
     "inputs": [
       {
@@ -609,7 +590,7 @@
       {
         "name": "",
         "type": "address",
-        "internalType": "address"
+        "internalType": "contract IEZKLVerifier"
       }
     ],
     "stateMutability": "view"
