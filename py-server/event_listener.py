@@ -220,7 +220,7 @@ async def process_news_event(event_data, contract, web3_instance):
                 return
 
             # 2. Get active sources from sources contract and use OpenAI to get evidence
-            sources_contract_address = "0xf33eC9b41A6d2B9B52b71B2f67beAc767191fDCD"
+            sources_contract_address = "0x128fbb7b33BdC6591EB941977a5004ee6c24b16B"
             sources_rpc_url = "https://rpc.api.moonbase.moonbeam.network"
             
             # Create Web3 instance for sources contract
@@ -283,29 +283,7 @@ async def process_news_event(event_data, contract, web3_instance):
                                             f"Here is the input:\n\n{json.dumps(openai_input)}"
 
                             )
-                            # response = client.chat.completions.create(
-                            #     model="gpt-4o",
-                            #     messages=[
-                            #         {
-                            #             "role": "user",
-                            #             "content": (
-                            #                 "You are a research assistant. I will give you a news claim and a list of trusted news sources. "
-                            #                 "Your task is to search for and extract relevant evidence about the claim *only from the provided sources*. "
-                            #                 "Summarize any supporting or contradicting information found in the articles. Do not have any links in the middle.\n\n"
-                            #                 "If no relevant information is found from the listed sources, write: "
-                            #                 "\"No relevant information found on the provided sources.\"\n\n"
-                            #                 "Return your answer strictly in the following JSON format:\n\n"
-                            #                 "{\n  \"news\": \"<the original news claim>\",\n  \"evidence\": \"<summary of the evidence from the listed sources>\"\n}\n\n"
-                            #                 f"Here is the input:\n\n{json.dumps(openai_input)}"
-                            #             )
-                            #         }
-                            #     ],
-                            #     temperature=1,
-                            #     max_tokens=2048,
-                            #     top_p=1
-                            # )
-                            
-                            # Extract evidence from OpenAI response
+                           
                             openai_response = response.output_text
                             logger.info(f"🤖 OpenAI response: {openai_response}")
                             
