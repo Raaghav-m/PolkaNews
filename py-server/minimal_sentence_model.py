@@ -209,8 +209,8 @@ async def verify_claim_with_proof(claim, evidence):
         verification_score = model_output.item()
         binary_decision = 1 if verification_score >= 0.5 else 0
     
-    print(f"🎯 Verification Score: {verification_score:.4f}")
-    print(f"⚖️  Binary Decision: {'✅ VERIFIED' if binary_decision == 1 else '❌ NOT VERIFIED'}")
+    # print(f"🎯 Verification Score: {verification_score:.4f}")
+    # print(f"⚖️  Binary Decision: {'✅ VERIFIED' if binary_decision == 1 else '❌ NOT VERIFIED'}")
     
     # Prepare input for ZK proof
     verification_data = {"input_data": [features]}
@@ -244,10 +244,7 @@ async def verify_claim_with_proof(claim, evidence):
     return {
         "claim": claim,
         "evidence": evidence,
-        "verification_score": verification_score,
         "binary_decision": binary_decision,
-        "verified": binary_decision == 1,
-        "features": features,
         "proof": proof["proof"] if isinstance(proof, dict) else str(proof),
         "proof_verified": True
     }

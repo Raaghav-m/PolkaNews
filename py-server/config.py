@@ -6,16 +6,16 @@ load_dotenv()
 class Config:
     """Configuration class for the Flask server"""
     
-    # Web3 Configuration
-    WEB3_WS_URI = os.getenv('WEB3_WS_URI', "wss://polygon-amoy.g.alchemy.com/v2/YOUR_API_KEY")
-    WEB3_HTTP_URI = os.getenv('WEB3_HTTP_URI', "https://polygon-amoy.g.alchemy.com/v2/YOUR_API_KEY")
+    # Web3 Configuration - Updated for Moonbeam
+    WEB3_WS_URI = os.getenv('WEB3_WS_URI', "wss://wss.api.moonbase.moonbeam.network")
+    WEB3_HTTP_URI = os.getenv('WEB3_HTTP_URI', "https://rpc.api.moonbase.moonbeam.network")
     
     # Contract Configuration
-    CONTRACT_ADDRESS = os.getenv('CONTRACT_ADDRESS')
+    CONTRACT_ADDRESS = os.getenv('CONTRACT_ADDRESS', "0x2F926aaB0eC4d0A1B808a335992C840781157596")
     CONTRACT_ABI_PATH = os.getenv('CONTRACT_ABI_PATH', './contract_abi.json')
     
-    # Private Key for signing transactions
-    PRIVATE_KEY = os.getenv('PRIVATE_KEY')
+    # Keep backward compatibility
+    PRIVATE_KEY = os.getenv('PRIVATE_KEY') 
     
     # Server Configuration
     FLASK_ENV = os.getenv('FLASK_ENV', 'development')
