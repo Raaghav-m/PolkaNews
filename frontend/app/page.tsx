@@ -245,7 +245,18 @@ export default function PolkaNewsDashboard() {
 
   const provider = usePublicClient();
 
-  // Load news articles
+  // Add this hook at the component level
+  const { data: newsData } = useReadContract({
+    address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
+    abi: PolkaNewsABI,
+    functionName: "getNewsArticles",
+    args: [0, 10], // Get first 10 articles
+    query: {
+      enabled: !!address,
+    },
+  });
+
+  // Update useEffect to use the hook data
   useEffect(() => {
     const loadNews = async () => {
       if (!address) return;
@@ -253,15 +264,9 @@ export default function PolkaNewsDashboard() {
       try {
         setIsLoadingNews(true);
         setNewsError(null);
-        const { data: newsData } = await useReadContract({
-          address: process.env.NEXT_PUBLIC_POLKANEWS_ADDRESS as `0x${string}`,
-          abi: PolkaNewsABI,
-          functionName: "getNewsArticles",
-          args: [0, 10], // Get first 10 articles
-        });
 
         if (newsData) {
-          await processNewsData(newsData);
+          await processNewsData(newsData as NewsArticle[]);
         }
       } catch (error) {
         console.error("Error loading news:", error);
@@ -277,7 +282,7 @@ export default function PolkaNewsDashboard() {
     };
 
     loadNews();
-  }, [address]);
+  }, [address, newsData]);
 
   // Process news data
   const processNewsData = async (newsData: NewsArticle[]) => {
@@ -718,6 +723,12 @@ export default function PolkaNewsDashboard() {
     }
   };
 
+  // Add this helper function for formatting timestamps
+  const formatTimestamp = (timestamp: string) => {
+    const date = new Date(Number(timestamp) * 1000);
+    return date.toLocaleString();
+  };
+
   const renderContent = () => {
     // Move declarations outside switch
     const isSubscribed = checkSubscriptionStatus(subscriptionDetails);
@@ -789,18 +800,35 @@ export default function PolkaNewsDashboard() {
                 ) : newsArticles.length > 0 ? (
                   <div className="space-y-4">
                     {newsArticles.map((article, index) => (
-                      <div key={index} className="border-b pb-4">
-                        <h3 className="font-semibold">{article.title}</h3>
-                        <p className="text-sm text-muted-foreground">
-                          {article.content}
-                        </p>
-                        <div className="flex justify-between items-center mt-2">
-                          <span className="text-xs text-muted-foreground">
-                            By {article.reporter}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            {article.timestamp}
-                          </span>
+                      <div
+                        key={index}
+                        className="border-b pb-4 mb-4 last:border-b-0 last:mb-0"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            <h3 className="text-lg font-semibold mb-2">
+                              {article.title}
+                            </h3>
+                            <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+                              {article.content}
+                            </p>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <span className="font-mono">
+                                {article.reporter.slice(0, 6)}...
+                                {article.reporter.slice(-4)}
+                              </span>
+                              <span>•</span>
+                              <span>{formatTimestamp(article.timestamp)}</span>
+                            </div>
+                          </div>
+                          <Badge
+                            variant={
+                              article.isVerified ? "default" : "secondary"
+                            }
+                            className="shrink-0"
+                          >
+                            {article.isVerified ? "Verified" : "Pending"}
+                          </Badge>
                         </div>
                       </div>
                     ))}
