@@ -94,30 +94,53 @@ const GradientButton = ({
 );
 
 // Floating particles background
-const FloatingParticles = () => (
-  <div className="absolute inset-0 overflow-hidden pointer-events-none">
-    {[...Array(20)].map((_, i) => (
-      <motion.div
-        key={i}
-        className="absolute w-2 h-2 bg-gradient-to-r from-blue-400 to-purple-400 rounded-full opacity-20"
-        initial={{
-          x: Math.random() * window.innerWidth,
-          y: Math.random() * window.innerHeight,
-        }}
-        animate={{
-          x: Math.random() * window.innerWidth,
-          y: Math.random() * window.innerHeight,
-        }}
-        transition={{
-          duration: Math.random() * 10 + 10,
-          repeat: Infinity,
-          repeatType: "reverse",
-          ease: "linear",
-        }}
-      />
-    ))}
-  </div>
-);
+const FloatingParticles = () => {
+  const [dimensions, setDimensions] = useState({ width: 1200, height: 800 });
+
+  useEffect(() => {
+    // Set actual window dimensions on client side
+    setDimensions({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    });
+
+    // Optional: Add resize listener
+    const handleResize = () => {
+      setDimensions({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  return (
+    <div className="absolute inset-0 overflow-hidden pointer-events-none">
+      {[...Array(20)].map((_, i) => (
+        <motion.div
+          key={i}
+          className="absolute w-2 h-2 bg-gradient-to-r from-blue-400 to-purple-400 rounded-full opacity-20"
+          initial={{
+            x: Math.random() * dimensions.width,
+            y: Math.random() * dimensions.height,
+          }}
+          animate={{
+            x: Math.random() * dimensions.width,
+            y: Math.random() * dimensions.height,
+          }}
+          transition={{
+            duration: Math.random() * 10 + 10,
+            repeat: Infinity,
+            repeatType: "reverse",
+            ease: "linear",
+          }}
+        />
+      ))}
+    </div>
+  );
+};
 
 // Token balance display component
 const TokenBalanceDisplay = ({ balance }: { balance: bigint | null }) => (
@@ -305,7 +328,9 @@ export default function FaucetPage() {
 
       toast({
         title: "Success",
-        description: `You've received ${Number(faucetAmount) / 1e18} TRUTH tokens!`,
+        description: `You've received ${
+          Number(faucetAmount) / 1e18
+        } TRUTH tokens!`,
       });
       // Refresh balance
       const balance = await getTokenBalance(address);
