@@ -93,6 +93,7 @@ import {
   claimRewards,
   distributeRewards,
   approveTokens,
+  getSourceRewards,
 } from "@/lib/sources";
 import SourcesABI from "@/lib/abi/SourcesABI.json";
 import TruthTokenABI from "@/lib/abi/TruthTokenABI.json";
@@ -241,6 +242,9 @@ export default function PolkaNewsDashboard() {
     abi: TruthTokenABI,
     functionName: "balanceOf",
     args: [address],
+    query: {
+      enabled: !!address,
+    },
   });
 
   const provider = usePublicClient();
@@ -588,6 +592,16 @@ export default function PolkaNewsDashboard() {
     }
   }, [sourceDetailsData]);
 
+  // Add this hook at the component level
+  const { data: sourceRewardsData } = useReadContract({
+    ...sourcesConfig,
+    functionName: "getSourceTotalRewards",
+    args: [selectedSource],
+    query: {
+      enabled: !!selectedSource,
+    },
+  });
+
   // Update handleAddSource
   const handleAddSource = async () => {
     if (!address || !isConnected) {
@@ -728,6 +742,71 @@ export default function PolkaNewsDashboard() {
     const date = new Date(Number(timestamp) * 1000);
     return date.toLocaleString();
   };
+
+  // Add state for source rewards
+  const [sourceRewards, setSourceRewards] = useState<Record<string, bigint>>(
+    {}
+  );
+
+  // Add effect to fetch rewards for all sources
+  useEffect(() => {
+    const fetchSourceRewards = async () => {
+      if (!activeSources.length) return;
+
+      const rewards: Record<string, bigint> = {};
+      for (const source of activeSources) {
+        try {
+          const reward = (await sourceRewardsData)
+            ? (sourceRewardsData as bigint)
+            : await getInvestorRewards(source);
+          rewards[source] = reward;
+        } catch (error) {
+          console.error(`Error fetching rewards for source ${source}:`, error);
+        }
+      }
+      setSourceRewards(rewards);
+    };
+
+    fetchSourceRewards();
+  }, [activeSources, sourceRewardsData]);
+
+  // Add state for source details
+  const [sourcesDetails, setSourcesDetails] = useState<Record<string, any>>({});
+
+  // Add effect to fetch details and rewards for all sources
+  useEffect(() => {
+    const fetchSourceDetails = async () => {
+      if (!activeSources.length || !provider) return;
+
+      const details: Record<string, any> = {};
+      const rewards: Record<string, bigint> = {};
+
+      for (const source of activeSources) {
+        try {
+          // Fetch source details
+          const sourceDetail = await getSourceDetails(source);
+          details[source] = sourceDetail;
+
+          // Fetch source rewards
+          const reward = await getSourceRewards(source);
+          rewards[source] = reward;
+        } catch (error) {
+          console.error(`Error fetching data for source ${source}:`, error);
+        }
+      }
+      setSourcesDetails(details);
+      setSourceRewards(rewards);
+    };
+
+    fetchSourceDetails();
+  }, [activeSources]);
+
+  // Update useEffect to handle token balance
+  useEffect(() => {
+    if (tokenBalanceData !== undefined) {
+      setTokenBalance(tokenBalanceData as bigint);
+    }
+  }, [tokenBalanceData]);
 
   const renderContent = () => {
     // Move declarations outside switch
@@ -894,22 +973,35 @@ export default function PolkaNewsDashboard() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">
-                    Click the button below to register your connected wallet
-                    address as a reporter. You will be able to submit news
-                    articles after registration.
-                  </p>
-                </div>
-                <Button
-                  onClick={handleRegisterReporter}
-                  className="w-full"
-                  disabled={isContractPending || !address}
-                >
-                  {isContractPending
-                    ? "Registering..."
-                    : "Register as Reporter"}
-                </Button>
+                {!address ? (
+                  <div className="text-sm text-muted-foreground">
+                    Please connect your wallet to register as a reporter.
+                  </div>
+                ) : isReporterData ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <CheckCircle className="h-4 w-4 text-green-500" />
+                    <span>You are already registered as a reporter.</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <p className="text-sm text-muted-foreground">
+                        Click the button below to register your connected wallet
+                        address as a reporter. You will be able to submit news
+                        articles after registration.
+                      </p>
+                    </div>
+                    <Button
+                      onClick={handleRegisterReporter}
+                      className="w-full"
+                      disabled={isContractPending || !address}
+                    >
+                      {isContractPending
+                        ? "Registering..."
+                        : "Register as Reporter"}
+                    </Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -957,7 +1049,7 @@ export default function PolkaNewsDashboard() {
                         </span>
                         <span className="text-sm text-muted-foreground">
                           {subscriptionFee
-                            ? `${Number(subscriptionFee) / 1e18} TRUTH`
+                            ? `${formatEther(subscriptionFee)} TRUTH`
                             : "Loading..."}
                         </span>
                       </div>
@@ -966,8 +1058,8 @@ export default function PolkaNewsDashboard() {
                           Your TRUTH Balance:
                         </span>
                         <span className="text-sm text-muted-foreground">
-                          {tokenBalance
-                            ? `${Number(tokenBalance) / 1e18} TRUTH`
+                          {tokenBalance !== null
+                            ? `${formatEther(tokenBalance)} TRUTH`
                             : "Loading..."}
                         </span>
                       </div>
@@ -1052,14 +1144,25 @@ export default function PolkaNewsDashboard() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Source Name</TableHead>
+                        <TableHead>Owner</TableHead>
+                        <TableHead>Total Rewards</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead>Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {activeSources.map((name) => (
                         <TableRow key={name}>
                           <TableCell className="font-medium">{name}</TableCell>
+                          <TableCell className="font-mono text-sm">
+                            {sourcesDetails[name]?.investor
+                              ? `${sourcesDetails[name].investor.slice(0, 6)}...${sourcesDetails[name].investor.slice(-4)}`
+                              : "Loading..."}
+                          </TableCell>
+                          <TableCell>
+                            {sourceRewards[name] !== undefined
+                              ? `${formatEther(sourceRewards[name])} TRUTH`
+                              : "Loading..."}
+                          </TableCell>
                           <TableCell>
                             <Badge
                               variant="default"
@@ -1069,13 +1172,6 @@ export default function PolkaNewsDashboard() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Button
-                              variant="ghost"
-                              onClick={() => setSelectedSource(name)}
-                              className="mr-2"
-                            >
-                              Details
-                            </Button>
                             <Button
                               variant="destructive"
                               onClick={() => handleChallengeSource(name)}

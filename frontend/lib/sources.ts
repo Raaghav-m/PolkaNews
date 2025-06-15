@@ -140,6 +140,26 @@ export async function getStakeAmount(): Promise<bigint> {
   }
 }
 
+export async function getSourceRewards(sourceName: string): Promise<bigint> {
+  try {
+    console.log("Getting rewards for source:", sourceName);
+    const result = (await readContract(config, {
+      ...sourcesConfig,
+      functionName: "getSourceTotalRewards",
+      args: [sourceName],
+    })) as bigint;
+    console.log("Source rewards:", result.toString());
+    return result;
+  } catch (error) {
+    console.error("Error fetching source rewards:", {
+      error,
+      sourceName,
+      config: sourcesConfig,
+    });
+    throw error;
+  }
+}
+
 // Write functions
 export async function addSource(
   sourceName: string,
