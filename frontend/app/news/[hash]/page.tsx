@@ -24,7 +24,7 @@ import {
 import { useAccount } from "wagmi";
 import { useToast } from "@/components/ui/use-toast";
 import { Toaster } from "@/components/ui/toaster";
-import { getNewsDetails } from "@/lib/contracts";
+import { getNewsDetails, verifyArticleProof } from "@/lib/contracts";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -398,14 +398,11 @@ export default function NewsDetailPage() {
   }, [params.hash]);
 
   const handleVerify = async () => {
-    setIsVerifying(true);
+    // setIsVerifying(true);
 
     try {
-      // Get the latest article data
-      const updatedArticle = await getNewsDetails(params.hash as string);
-      if (updatedArticle) {
-        setArticle(updatedArticle);
-      }
+      console.log(article);
+      const result = await verifyArticleProof(1);
 
       // Simulate verification process - the animation will run for about 12 seconds
       setTimeout(() => {
@@ -627,7 +624,7 @@ export default function NewsDetailPage() {
                 <GradientButton
                   onClick={handleVerify}
                   className="w-full"
-                  disabled={isVerifying || article.isProofVerified}
+                  disabled={isVerifying}
                 >
                   {isVerifying ? (
                     <>
@@ -637,9 +634,7 @@ export default function NewsDetailPage() {
                   ) : (
                     <>
                       <Shield className="w-4 h-4 mr-2" />
-                      {article.isProofVerified
-                        ? "Already Verified"
-                        : "Verify Proof"}
+                      Verify Proof
                     </>
                   )}
                 </GradientButton>
